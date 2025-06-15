@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run MiniDeck Debug",
+			"type": "shell",
+			"command": "cd",
+			"args": [
+				"\"c:\\Users\\s_kaz\\source\\repos\\MiniDeck\\MiniDeck\\bin\\Debug\"",
+				"&&",
+				"MiniDeck.exe"
+			],
+			"group": "test",
+			"isBackground": false
+		}
+	]
+}

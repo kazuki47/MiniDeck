@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.36105.23 d17.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniDeck", "MiniDeck\MiniDeck.csproj", "{20511975-12E3-4D4E-A809-BAF173E105D6}"
+EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "MiniDeckSetup", "MiniDeckSetup\MiniDeckSetup.vdproj", "{590F8E24-5A6A-4EAB-A3C9-9EC44F2CE7EB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{20511975-12E3-4D4E-A809-BAF173E105D6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{20511975-12E3-4D4E-A809-BAF173E105D6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{20511975-12E3-4D4E-A809-BAF173E105D6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{20511975-12E3-4D4E-A809-BAF173E105D6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{590F8E24-5A6A-4EAB-A3C9-9EC44F2CE7EB}.Debug|Any CPU.ActiveCfg = Debug
+		{590F8E24-5A6A-4EAB-A3C9-9EC44F2CE7EB}.Release|Any CPU.ActiveCfg = Release
+		{590F8E24-5A6A-4EAB-A3C9-9EC44F2CE7EB}.Release|Any CPU.Build.0 = Release
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {7E491251-8664-48C3-AECC-4B2F1B50E96B}
+	EndGlobalSection
+EndGlobal

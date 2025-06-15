@@ -1,0 +1,149 @@
+# Visual Studio files
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+mono_crash.*
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Rider
+.idea/
+*.sln.iml
+
+# NuGet Packages
+*.nupkg
+# NuGet Symbol Packages
+*.snupkg
+# The packages folder can be ignored because of Package Restore
+**/[Pp]ackages/*
+# except build/, which is used as an MSBuild target.
+!**/[Pp]ackages/build/
+# Uncomment if necessary however generally it will be regenerated when needed
+#!**/[Pp]ackages/repositories.config
+# NuGet v3's project.json files produces more ignorable files
+*.nuget.props
+*.nuget.targets
+
+# Visual Studio Installer Projects
+*.vdproj.bak
+
+# Distribution files and packages
+*.zip
+*.7z
+*.tar.gz
+*.rar
+MiniDeck-SimpleDistribution.zip
+MiniDeckDistribution.zip
+Distribution/
+SimpleDistribution/
+dist/
+publish/
+
+# MSI Installer files
+*.msi
+*.msix
+*.msm
+*.msp
+*.cab
+
+# Build and upgrade logs
+*.log
+build_log.txt
+build_output.log
+UpgradeLog*.htm
+UpgradeLog*.XML
+
+# Backup and temporary files
+*.bak
+*.backup
+*_backup*
+*.tmp
+*.temp
+*.new
+*.old
+*~
+.#*
+
+# Windows specific files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Application specific
+# User settings files (if storing user preferences locally)
+settings.xml
+config.xml
+*.config.user
+
+# Resource cache files
+*.cache
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Performance profiler
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# macOS files (if developing on macOS)
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux files (if developing on Linux)
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Editor backup files
+*~
+.#*
+\#*#
+.*.swp
+.*.swo
+
+# Local development files
+local.settings.json
+appsettings.local.json
