@@ -160,7 +160,56 @@ namespace MiniDeck.ViewModels
         {
             get => _statusText;
             set { _statusText = value; OnPropertyChanged(); }
-        }        public MainViewModel()
+        }
+
+        public void ApplyLayoutSettings(
+            int buttonRows,
+            int buttonColumns,
+            double backgroundOpacity,
+            double buttonOpacity)
+        {
+            buttonRows = Math.Max(1, Math.Min(3, buttonRows));
+            buttonColumns = Math.Max(1, Math.Min(5, buttonColumns));
+            backgroundOpacity = Math.Max(0.0, Math.Min(1.0, backgroundOpacity));
+            buttonOpacity = Math.Max(0.0, Math.Min(1.0, buttonOpacity));
+
+            bool layoutChanged = _buttonRows != buttonRows || _buttonColumns != buttonColumns;
+            bool backgroundOpacityChanged = Math.Abs(_backgroundOpacity - backgroundOpacity) > 0.0001;
+            bool buttonOpacityChanged = Math.Abs(_buttonOpacity - buttonOpacity) > 0.0001;
+
+            if (!layoutChanged && !backgroundOpacityChanged && !buttonOpacityChanged)
+            {
+                return;
+            }
+
+            if (layoutChanged)
+            {
+                _buttonRows = buttonRows;
+                _buttonColumns = buttonColumns;
+                OnPropertyChanged(nameof(ButtonRows));
+                OnPropertyChanged(nameof(ButtonColumns));
+
+                // 行列をまとめて更新してから、一度だけボタン数を調整する
+                UpdateButtons();
+            }
+
+            if (backgroundOpacityChanged)
+            {
+                _backgroundOpacity = backgroundOpacity;
+                OnPropertyChanged(nameof(BackgroundOpacity));
+            }
+
+            if (buttonOpacityChanged)
+            {
+                _buttonOpacity = buttonOpacity;
+                OnPropertyChanged(nameof(ButtonOpacity));
+            }
+
+            // スライダー操作中は保存せず、適用時に一度だけ保存する
+            SaveSettings();
+        }
+
+        public MainViewModel()
         {
             Console.WriteLine("MainViewModel: コンストラクタが呼び出されました");
             _actionService = new ActionService();

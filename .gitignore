@@ -147,3 +147,6 @@ TestResults/
 # Local development files
 local.settings.json
 appsettings.local.json
+
+# Local audit and verification artifacts
+.audit/

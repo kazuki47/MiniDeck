@@ -4,14 +4,18 @@ using MiniDeck.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 
 namespace MiniDeck
-{    public partial class ButtonSettingsWindow : Window
+{
+    public partial class ButtonSettingsWindow : Window
     {
         public ActionButton Button { get; private set; }
+        private bool _isCapturingKey = false;
 
         public ButtonSettingsWindow(ActionButton button)
         {
@@ -322,6 +326,195 @@ namespace MiniDeck
             catch
             {
                 ImagePreview.Source = null;
+            }
+        }
+
+        // キーキャプチャボタンのクリックハンドラ
+        private void CaptureKey_Click(object sender, RoutedEventArgs e)
+        {
+            _isCapturingKey = true;
+            CaptureKeyButton.Content = "入力待ち...";
+            CaptureKeyButton.IsEnabled = false;
+            KeyCaptureHint.Text = "※キーを押してください（Escでキャンセル）";
+            ShortcutKeyBox.Focus();
+        }
+
+        // キー入力のキャプチャハンドラ
+        private void ShortcutKeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (!_isCapturingKey)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            e.Handled = true;
+
+            // Escapeキーでキャンセル
+            if (e.Key == Key.Escape)
+            {
+                StopKeyCapture();
+                return;
+            }
+
+            // 修飾キーのみの場合は待機
+            if (e.Key == Key.LeftCtrl || e.Key == Key.RightCtrl ||
+                e.Key == Key.LeftAlt || e.Key == Key.RightAlt ||
+                e.Key == Key.LeftShift || e.Key == Key.RightShift ||
+                e.Key == Key.LWin || e.Key == Key.RWin ||
+                e.Key == Key.System)
+            {
+                return;
+            }
+
+            // キーの組み合わせを構築
+            var keySequence = new StringBuilder();
+            
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+            {
+                keySequence.Append("Ctrl+");
+            }
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+            {
+                keySequence.Append("Shift+");
+            }
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
+            {
+                keySequence.Append("Alt+");
+            }
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Windows))
+            {
+                keySequence.Append("Win+");
+            }
+
+            // メインキーを追加
+            var mainKey = e.Key == Key.System ? e.SystemKey : e.Key;
+            keySequence.Append(ConvertKeyToString(mainKey));
+
+            ShortcutKeyBox.Text = keySequence.ToString();
+            StopKeyCapture();
+        }
+
+        private void StopKeyCapture()
+        {
+            _isCapturingKey = false;
+            CaptureKeyButton.Content = "キーを入力";
+            CaptureKeyButton.IsEnabled = true;
+            KeyCaptureHint.Text = "※「キーを入力」ボタンを押して、登録したいキーの組み合わせを押してください";
+        }
+
+        private string ConvertKeyToString(Key key)
+        {
+            switch (key)
+            {
+                // ファンクションキー
+                case Key.F1: return "F1";
+                case Key.F2: return "F2";
+                case Key.F3: return "F3";
+                case Key.F4: return "F4";
+                case Key.F5: return "F5";
+                case Key.F6: return "F6";
+                case Key.F7: return "F7";
+                case Key.F8: return "F8";
+                case Key.F9: return "F9";
+                case Key.F10: return "F10";
+                case Key.F11: return "F11";
+                case Key.F12: return "F12";
+
+                // 特殊キー
+                case Key.Return: return "Enter";
+                case Key.Escape: return "Escape";
+                case Key.Tab: return "Tab";
+                case Key.Space: return "Space";
+                case Key.Back: return "Backspace";
+                case Key.Delete: return "Delete";
+                case Key.Insert: return "Insert";
+                case Key.Home: return "Home";
+                case Key.End: return "End";
+                case Key.PageUp: return "PageUp";
+                case Key.PageDown: return "PageDown";
+                case Key.Up: return "Up";
+                case Key.Down: return "Down";
+                case Key.Left: return "Left";
+                case Key.Right: return "Right";
+                case Key.PrintScreen: return "PrintScreen";
+                case Key.Pause: return "Pause";
+                case Key.CapsLock: return "CapsLock";
+                case Key.NumLock: return "NumLock";
+                case Key.Scroll: return "ScrollLock";
+
+                // 数字キー (メインキーボード)
+                case Key.D0: return "0";
+                case Key.D1: return "1";
+                case Key.D2: return "2";
+                case Key.D3: return "3";
+                case Key.D4: return "4";
+                case Key.D5: return "5";
+                case Key.D6: return "6";
+                case Key.D7: return "7";
+                case Key.D8: return "8";
+                case Key.D9: return "9";
+
+                // テンキー
+                case Key.NumPad0: return "NumPad0";
+                case Key.NumPad1: return "NumPad1";
+                case Key.NumPad2: return "NumPad2";
+                case Key.NumPad3: return "NumPad3";
+                case Key.NumPad4: return "NumPad4";
+                case Key.NumPad5: return "NumPad5";
+                case Key.NumPad6: return "NumPad6";
+                case Key.NumPad7: return "NumPad7";
+                case Key.NumPad8: return "NumPad8";
+                case Key.NumPad9: return "NumPad9";
+                case Key.Multiply: return "Multiply";
+                case Key.Add: return "Add";
+                case Key.Subtract: return "Subtract";
+                case Key.Divide: return "Divide";
+                case Key.Decimal: return "Decimal";
+
+                // アルファベット
+                case Key.A: return "A";
+                case Key.B: return "B";
+                case Key.C: return "C";
+                case Key.D: return "D";
+                case Key.E: return "E";
+                case Key.F: return "F";
+                case Key.G: return "G";
+                case Key.H: return "H";
+                case Key.I: return "I";
+                case Key.J: return "J";
+                case Key.K: return "K";
+                case Key.L: return "L";
+                case Key.M: return "M";
+                case Key.N: return "N";
+                case Key.O: return "O";
+                case Key.P: return "P";
+                case Key.Q: return "Q";
+                case Key.R: return "R";
+                case Key.S: return "S";
+                case Key.T: return "T";
+                case Key.U: return "U";
+                case Key.V: return "V";
+                case Key.W: return "W";
+                case Key.X: return "X";
+                case Key.Y: return "Y";
+                case Key.Z: return "Z";
+
+                // その他
+                case Key.OemMinus: return "-";
+                case Key.OemPlus: return "=";
+                case Key.OemOpenBrackets: return "[";
+                case Key.OemCloseBrackets: return "]";
+                case Key.OemSemicolon: return ";";
+                case Key.OemQuotes: return "'";
+                case Key.OemComma: return ",";
+                case Key.OemPeriod: return ".";
+                case Key.OemQuestion: return "/";
+                case Key.OemPipe: return "\\";
+                case Key.OemTilde: return "`";
+
+                default:
+                    return key.ToString();
             }
         }
     }

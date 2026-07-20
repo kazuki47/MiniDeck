@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MiniDeck"
         xmlns:vm="clr-namespace:MiniDeck.ViewModels"        xmlns:models="clr-namespace:MiniDeck.Models"        mc:Ignorable="d"        Title="MiniDeck" Height="250" Width="400"
-        AllowsTransparency="True" WindowStyle="None"
+        AllowsTransparency="True" WindowStyle="None" ShowActivated="False"
         Topmost="True"        WindowStartupLocation="Manual"
         BorderThickness="1" BorderBrush="Black"
         Icon="/image/MiniDeckIcon.ico">

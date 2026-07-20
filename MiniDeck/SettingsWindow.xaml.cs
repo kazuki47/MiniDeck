@@ -11,8 +11,7 @@ namespace MiniDeck
     public partial class SettingsWindow : Window
     {
         private MainViewModel _viewModel;
-        private int _originalRows;
-        private int _originalColumns;
+        private bool _isSynchronizingOpacitySliders;
           
         public SettingsWindow(MainViewModel viewModel)
         {
@@ -21,10 +20,8 @@ namespace MiniDeck
                 InitializeComponent();
                 _viewModel = viewModel;
                 DataContext = _viewModel;
-                
-                // 元の値を保存
-                _originalRows = _viewModel.ButtonRows;
-                _originalColumns = _viewModel.ButtonColumns;
+
+                InitializeSliderValues();
                 
                 // ボタンリストにデータをバインド
                 ButtonListView.ItemsSource = _viewModel.Buttons;
@@ -82,7 +79,28 @@ namespace MiniDeck
                 MessageBox.Show($"設定ウィンドウの初期化でエラーが発生しました:\n{ex.Message}\n\nスタックトレース:\n{ex.StackTrace}", 
                     "初期化エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             }
-        }        private void EditButton_Click(object sender, RoutedEventArgs e)
+        }
+
+        private void InitializeSliderValues()
+        {
+            _isSynchronizingOpacitySliders = true;
+            try
+            {
+                RowsSlider.Value = _viewModel.ButtonRows;
+                ColumnsSlider.Value = _viewModel.ButtonColumns;
+                OpacitySlider.Value = _viewModel.BackgroundOpacity;
+                BackgroundOpacitySlider.Value = _viewModel.BackgroundOpacity;
+                ButtonOpacitySlider.Value = _viewModel.ButtonOpacity;
+            }
+            finally
+            {
+                _isSynchronizingOpacitySliders = false;
+            }
+
+            UpdateLayoutChangeHint();
+        }
+
+        private void EditButton_Click(object sender, RoutedEventArgs e)
         {
             // 選択されたボタンを編集
             var selectedButton = ButtonListView.SelectedItem as ActionButton;
@@ -110,16 +128,11 @@ namespace MiniDeck
         {
             try
             {
-                // デバッグ用にコンソールに表示
-                Console.WriteLine($"設定を保存します。現在の透明度: {_viewModel.BackgroundOpacity:F2}");
-                
-                // 直接ViewModelのプロパティを更新
-                if (OpacitySlider != null)
+                if (!TryApplyPendingSliderSettings())
                 {
-                    _viewModel.BackgroundOpacity = OpacitySlider.Value;
-                    Console.WriteLine($"透明度をスライダーから更新: {OpacitySlider.Value:F2}");
+                    return;
                 }
-                
+
                 // 背景設定をメインウィンドウに適用
                 ApplyBackgroundSettingsToMainWindow();
                 
@@ -135,10 +148,7 @@ namespace MiniDeck
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            // 変更を破棄
-            _viewModel.ButtonRows = _originalRows;
-            _viewModel.ButtonColumns = _originalColumns;
-            
+            // スライダーの値はViewModelへ未反映なので、そのまま破棄する
             DialogResult = false;
             Close();
         }
@@ -147,13 +157,11 @@ namespace MiniDeck
         {
             try
             {
-                // 設定を適用
-                if (_viewModel != null && OpacitySlider != null)
+                if (!TryApplyPendingSliderSettings())
                 {
-                    _viewModel.BackgroundOpacity = OpacitySlider.Value;
-                    Console.WriteLine($"適用：透明度を更新しました: {_viewModel.BackgroundOpacity:F2}");
+                    return;
                 }
-                
+
                 // 背景設定をメインウィンドウに適用
                 ApplyBackgroundSettingsToMainWindow();
             }
@@ -189,7 +197,7 @@ namespace MiniDeck
                 ImagePreviewImg.Visibility = Visibility.Collapsed;
                 
                 // 透明度を適用
-                ColorPreviewRect.Opacity = _viewModel.BackgroundOpacity;
+                ColorPreviewRect.Opacity = GetPendingBackgroundOpacity();
             }
             else if (ImageRadioButton?.IsChecked == true)
             {
@@ -201,29 +209,134 @@ namespace MiniDeck
                 UpdateImagePreview(_viewModel.BackgroundImagePath);
                 
                 // 透明度を適用
-                ImagePreviewImg.Opacity = _viewModel.BackgroundOpacity;
+                ImagePreviewImg.Opacity = GetPendingBackgroundOpacity();
             }
+        }
+
+        private void LayoutSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            UpdateLayoutChangeHint();
+        }
+
+        private void LayoutOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_isSynchronizingOpacitySliders)
+            {
+                return;
+            }
+
+            _isSynchronizingOpacitySliders = true;
+            try
+            {
+                if (BackgroundOpacitySlider != null)
+                {
+                    BackgroundOpacitySlider.Value = e.NewValue;
+                }
+            }
+            finally
+            {
+                _isSynchronizingOpacitySliders = false;
+            }
+
+            UpdateBackgroundPreview();
         }
         
         private void BackgroundOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            // スライダーからの値変更時にモデルを更新
-            if (_viewModel != null && BackgroundOpacitySlider != null)
+            if (_isSynchronizingOpacitySliders)
             {
-                _viewModel.BackgroundOpacity = BackgroundOpacitySlider.Value;
-                
-                // OpacitySliderも同期
+                return;
+            }
+
+            _isSynchronizingOpacitySliders = true;
+            try
+            {
                 if (OpacitySlider != null)
                 {
-                    OpacitySlider.Value = BackgroundOpacitySlider.Value;
+                    OpacitySlider.Value = e.NewValue;
                 }
-                
-                // プレビュー更新
-                UpdateBackgroundPreview();
-                
-                // デバッグ出力
-                Console.WriteLine($"背景透明度が変更されました: {_viewModel.BackgroundOpacity:F2}");
             }
+            finally
+            {
+                _isSynchronizingOpacitySliders = false;
+            }
+
+            UpdateBackgroundPreview();
+        }
+
+        private double GetPendingBackgroundOpacity()
+        {
+            return BackgroundOpacitySlider?.Value ?? _viewModel?.BackgroundOpacity ?? 0.0;
+        }
+
+        private void UpdateLayoutChangeHint()
+        {
+            if (LayoutChangeHint == null || RowsSlider == null || ColumnsSlider == null || _viewModel == null)
+            {
+                return;
+            }
+
+            int rows = (int)Math.Round(RowsSlider.Value);
+            int columns = (int)Math.Round(ColumnsSlider.Value);
+            int newButtonCount = rows * columns;
+            int currentButtonCount = _viewModel.Buttons?.Count ?? 0;
+
+            if (newButtonCount < currentButtonCount)
+            {
+                int removedButtonCount = currentButtonCount - newButtonCount;
+                LayoutChangeHint.Text = $"合計 {newButtonCount} ボタン。適用すると末尾の {removedButtonCount} ボタン設定が削除されます。";
+            }
+            else if (newButtonCount > currentButtonCount)
+            {
+                int addedButtonCount = newButtonCount - currentButtonCount;
+                LayoutChangeHint.Text = $"合計 {newButtonCount} ボタン。適用すると空のボタンが {addedButtonCount} 個追加されます。";
+            }
+            else
+            {
+                LayoutChangeHint.Text = $"合計 {newButtonCount} ボタン。現在のボタン数と同じです。";
+            }
+        }
+
+        private bool TryApplyPendingSliderSettings()
+        {
+            if (_viewModel == null)
+            {
+                return false;
+            }
+
+            int rows = (int)Math.Round(RowsSlider.Value);
+            int columns = (int)Math.Round(ColumnsSlider.Value);
+            int newButtonCount = rows * columns;
+            int currentButtonCount = _viewModel.Buttons?.Count ?? 0;
+
+            if (newButtonCount < currentButtonCount)
+            {
+                int removedButtonCount = currentButtonCount - newButtonCount;
+                MessageBoxResult result = MessageBox.Show(
+                    $"末尾の {removedButtonCount} ボタン設定が削除されます。続行しますか？",
+                    "ボタン数の確認",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result != MessageBoxResult.Yes)
+                {
+                    return false;
+                }
+            }
+
+            _viewModel.ApplyLayoutSettings(
+                rows,
+                columns,
+                OpacitySlider.Value,
+                ButtonOpacitySlider.Value);
+
+            if (Owner is MainWindow mainWindow)
+            {
+                mainWindow.ApplyLayoutFromSettings();
+            }
+
+            UpdateLayoutChangeHint();
+            return true;
         }
 
         // 画像プレビュー更新メソッド

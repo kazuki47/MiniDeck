@@ -73,17 +73,23 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>                <Grid.ColumnDefinitions>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="110"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="キーシーケンス:" Margin="0,5,10,5"/>
-                <TextBox Grid.Row="0" Grid.Column="1" x:Name="ShortcutKeyBox" MinWidth="320"
-                         ToolTip="例: Control+C, Alt+Tab, Control+Shift+V など"/>
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="ShortcutKeyBox" MinWidth="220"
+                         IsReadOnly="True" Background="#40000000" Foreground="White"
+                         ToolTip="「キーを入力」ボタンを押してからキーを押してください"
+                         PreviewKeyDown="ShortcutKeyBox_PreviewKeyDown"/>
+                <Button Grid.Row="0" Grid.Column="2" x:Name="CaptureKeyButton" Content="キーを入力" 
+                        Width="80" Margin="5,0,0,0" Click="CaptureKey_Click"/>
                 
-                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" 
-                           Text="※Ctrl, Shift, Alt, Control, Menu などの修飾キーとアルファベットなどを + で区切って入力" 
+                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" x:Name="KeyCaptureHint"
+                           Text="※「キーを入力」ボタンを押して、登録したいキーの組み合わせを押してください" 
                            TextWrapping="Wrap" Opacity="0.7" Margin="0,5,0,0" FontSize="11"/>
             </Grid>
         </Border>

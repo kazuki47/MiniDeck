@@ -10,12 +10,22 @@ using System.Windows.Markup; // XamlReaderのため
 using System.Windows.Controls; // Buttonのため
 using System.IO; // StringReaderのため
 using System.Collections.Generic; // IEnumerable<T>のため
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 
 
 namespace MiniDeck
 {    public partial class MainWindow : Window
     {
-        private MainViewModel _viewModel;        public MainWindow()
+        private const int GWL_EXSTYLE = -20;
+        private const long WS_EX_NOACTIVATE = 0x08000000L;
+        private const int WM_MOUSEACTIVATE = 0x0021;
+        private const int MA_NOACTIVATE = 3;
+
+        private MainViewModel _viewModel;
+        private HwndSource _windowSource;
+
+        public MainWindow()
         {
             try
             {
@@ -100,23 +110,124 @@ namespace MiniDeck
                     "初期化エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+
+            IntPtr windowHandle = new WindowInteropHelper(this).Handle;
+            long extendedStyle = GetWindowLongPtr(windowHandle, GWL_EXSTYLE).ToInt64();
+            long nonActivatingStyle = extendedStyle | WS_EX_NOACTIVATE;
+
+            SetWindowLongPtr(
+                windowHandle,
+                GWL_EXSTYLE,
+                new IntPtr(nonActivatingStyle));
+
+            long appliedStyle = GetWindowLongPtr(windowHandle, GWL_EXSTYLE).ToInt64();
+            if ((appliedStyle & WS_EX_NOACTIVATE) == 0)
+            {
+                int errorCode = Marshal.GetLastWin32Error();
+                Console.WriteLine($"非アクティブウィンドウの設定に失敗しました。Win32エラー: {errorCode}");
+            }
+
+            _windowSource = HwndSource.FromHwnd(windowHandle);
+            _windowSource?.AddHook(MainWindowHook);
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            if (_windowSource != null)
+            {
+                _windowSource.RemoveHook(MainWindowHook);
+                _windowSource = null;
+            }
+
+            base.OnClosed(e);
+        }
+
+        private IntPtr MainWindowHook(
+            IntPtr hwnd,
+            int message,
+            IntPtr wParam,
+            IntPtr lParam,
+            ref bool handled)
+        {
+            if (message == WM_MOUSEACTIVATE)
+            {
+                handled = true;
+                return new IntPtr(MA_NOACTIVATE);
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private static IntPtr GetWindowLongPtr(IntPtr windowHandle, int index)
+        {
+            return IntPtr.Size == 8
+                ? GetWindowLongPtr64(windowHandle, index)
+                : new IntPtr(GetWindowLong32(windowHandle, index));
+        }
+
+        private static IntPtr SetWindowLongPtr(IntPtr windowHandle, int index, IntPtr newValue)
+        {
+            return IntPtr.Size == 8
+                ? SetWindowLongPtr64(windowHandle, index, newValue)
+                : new IntPtr(SetWindowLong32(windowHandle, index, newValue.ToInt32()));
+        }
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLong", SetLastError = true)]
+        private static extern int GetWindowLong32(IntPtr windowHandle, int index);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr", SetLastError = true)]
+        private static extern IntPtr GetWindowLongPtr64(IntPtr windowHandle, int index);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLong", SetLastError = true)]
+        private static extern int SetWindowLong32(IntPtr windowHandle, int index, int newValue);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr", SetLastError = true)]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr windowHandle, int index, IntPtr newValue);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindow(IntPtr windowHandle);
         
         private void AdjustWindowSize()
         {
             // ボタンのサイズと余白を考慮してウィンドウサイズを計算
-            // ボタンのサイズは XAML で Width="80" Height="70" Margin="4" と定義されている
             const int BUTTON_WIDTH = 80;
-            const int BUTTON_HEIGHT = 70;
-            const int BUTTON_MARGIN = 4 * 2; // 上下左右の余白 (余白は両側にあるので2倍)
+            const int BUTTON_HEIGHT = 65;
+            const int BUTTON_HORIZONTAL_MARGIN = 8;
+            const int BUTTON_VERTICAL_MARGIN = 4;
             const int HEADER_HEIGHT = 30;    // タイトルバー
             const int FOOTER_HEIGHT = 20;    // ステータスバー
             const int WINDOW_PADDING = 10;   // ウィンドウ内部の余白
             
-            int totalWidth = (_viewModel.ButtonColumns * (BUTTON_WIDTH + BUTTON_MARGIN)) + (WINDOW_PADDING * 2);
-            int totalHeight = (_viewModel.ButtonRows * (BUTTON_HEIGHT + BUTTON_MARGIN)) + HEADER_HEIGHT + FOOTER_HEIGHT + (WINDOW_PADDING * 2);
+            int totalWidth = (_viewModel.ButtonColumns * (BUTTON_WIDTH + BUTTON_HORIZONTAL_MARGIN)) + (WINDOW_PADDING * 2);
+            int totalHeight = (_viewModel.ButtonRows * (BUTTON_HEIGHT + BUTTON_VERTICAL_MARGIN)) + HEADER_HEIGHT + FOOTER_HEIGHT + (WINDOW_PADDING * 2);
             
             Width = totalWidth;
             Height = totalHeight;
+        }
+
+        internal void ApplyLayoutFromSettings()
+        {
+            if (_viewModel == null)
+            {
+                return;
+            }
+
+            // ウィンドウ下端を維持し、行数増減時に画面外へ伸びにくくする
+            double currentBottom = Top + ActualHeight;
+            AdjustWindowSize();
+            Top = currentBottom - Height;
         }
         
         private void PositionWindowAtBottomLeft()
@@ -145,6 +256,7 @@ namespace MiniDeck
             this.Width = 400;
             this.AllowsTransparency = true;
             this.WindowStyle = WindowStyle.None;
+            this.ShowActivated = false;
             this.Topmost = true;
             this.WindowStartupLocation = WindowStartupLocation.Manual;
             this.BorderThickness = new Thickness(1);
@@ -222,6 +334,9 @@ namespace MiniDeck
         {
             // 初期ロード時に背景透明度を適用
             UpdateBackgroundOpacity();
+
+            // 保存された行列数に合わせてウィンドウサイズを調整
+            AdjustWindowSize();
             
             // ウィンドウの位置を画面左下に設定（レイアウト完了後）
             PositionWindowAtBottomLeft();
@@ -350,6 +465,14 @@ namespace MiniDeck
         
         private void Settings_Click(object sender, RoutedEventArgs e)
         {
+            IntPtr previousForegroundWindow = GetForegroundWindow();
+            IntPtr mainWindowHandle = new WindowInteropHelper(this).Handle;
+
+            if (previousForegroundWindow == mainWindowHandle)
+            {
+                previousForegroundWindow = IntPtr.Zero;
+            }
+
             try
             {
                 // 設定ウィンドウを表示
@@ -361,6 +484,16 @@ namespace MiniDeck
             {
                 MessageBox.Show($"設定ウィンドウを開く際にエラーが発生しました:\n{ex.Message}\n\nスタックトレース:\n{ex.StackTrace}", 
                     "設定ウィンドウエラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                if (previousForegroundWindow != IntPtr.Zero && IsWindow(previousForegroundWindow))
+                {
+                    if (!SetForegroundWindow(previousForegroundWindow))
+                    {
+                        Console.WriteLine("設定画面を開く前のウィンドウへフォーカスを戻せませんでした。");
+                    }
+                }
             }
         }
         
