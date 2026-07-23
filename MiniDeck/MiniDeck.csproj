@@ -61,12 +61,24 @@
 		<Page Include="ButtonSettingsWindow.xaml">
 			<Generator>MSBuild:Compile</Generator>
 			<SubType>Designer</SubType>
+		</Page>
+		<Page Include="Controls\ButtonGridControl.xaml">
+			<Generator>MSBuild:Compile</Generator>
+			<SubType>Designer</SubType>
 		</Page>		
 		<Page Include="ColorPickerDialog.xaml">
 			<Generator>MSBuild:Compile</Generator>
 			<SubType>Designer</SubType>
 		</Page>
 		<Page Include="MainWindow.xaml">
+			<Generator>MSBuild:Compile</Generator>
+			<SubType>Designer</SubType>
+		</Page>
+		<Page Include="ImageManagementWindow.xaml">
+			<Generator>MSBuild:Compile</Generator>
+			<SubType>Designer</SubType>
+		</Page>
+		<Page Include="PageReorderWindow.xaml">
 			<Generator>MSBuild:Compile</Generator>
 			<SubType>Designer</SubType>
 		</Page>
@@ -83,17 +95,36 @@
 		<Compile Include="ButtonSettingsWindow.xaml.cs">
 			<DependentUpon>ButtonSettingsWindow.xaml</DependentUpon>
 		</Compile>
+		<Compile Include="Controls\ButtonGridControl.xaml.cs">
+			<DependentUpon>ButtonGridControl.xaml</DependentUpon>
+		</Compile>
 		<Compile Include="ColorPickerDialog.xaml.cs">
 			<DependentUpon>ColorPickerDialog.xaml</DependentUpon>
 		</Compile>
 		<Compile Include="MainWindow.xaml.cs">
 			<DependentUpon>MainWindow.xaml</DependentUpon>
 			<SubType>Code</SubType>
-		</Compile>		<Compile Include="Models\ActionButton.cs" />
+		</Compile>
+		<Compile Include="ImageManagementWindow.xaml.cs">
+			<DependentUpon>ImageManagementWindow.xaml</DependentUpon>
+		</Compile>
+		<Compile Include="PageReorderWindow.xaml.cs">
+			<DependentUpon>PageReorderWindow.xaml</DependentUpon>
+		</Compile>
+		<Compile Include="Models\ActionButton.cs" />
 		<Compile Include="Models\ActionType.cs" />
 		<Compile Include="Models\ButtonSetting.cs" />
+		<Compile Include="Models\ButtonStateDisplayType.cs" />
 		<Compile Include="Models\AppSettings.cs" />
+		<Compile Include="Models\PageSetting.cs" />
 		<Compile Include="Services\ActionService.cs" />
+		<Compile Include="Services\AutoStartService.cs" />
+		<Compile Include="Services\ButtonDropService.cs" />
+		<Compile Include="Services\ButtonStateMonitorService.cs" />
+		<Compile Include="Services\EditorClipboardService.cs" />
+		<Compile Include="Services\ImageStorageService.cs" />
+		<Compile Include="Services\ImageAssetService.cs" />
+		<Compile Include="Services\ShellIconService.cs" />
 		<Compile Include="Services\SettingsService.cs" />
 		<Compile Include="SettingsWindow.xaml.cs">
 			<DependentUpon>SettingsWindow.xaml</DependentUpon>

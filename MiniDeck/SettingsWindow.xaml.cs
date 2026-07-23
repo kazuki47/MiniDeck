@@ -5,6 +5,11 @@ using System.Windows.Controls;
 using Microsoft.Win32;
 using System;
 using System.Windows.Media;
+using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.Linq;
+using MiniDeck.Controls;
+using MiniDeck.Services;
 
 namespace MiniDeck
 {
@@ -12,6 +17,16 @@ namespace MiniDeck
     {
         private MainViewModel _viewModel;
         private bool _isSynchronizingOpacitySliders;
+        private bool _isSwitchingDraftPage;
+        private PageSetting _selectedDraftPage;
+        private readonly ButtonDropService _buttonDropService = new ButtonDropService();
+        private static readonly EditorClipboardService EditorClipboard = new EditorClipboardService();
+        private string _lastAppliedBackgroundImagePath;
+
+        public ObservableCollection<ActionButton> DraftButtons { get; } = new ObservableCollection<ActionButton>();
+        public ObservableCollection<PageSetting> DraftPages { get; } = new ObservableCollection<PageSetting>();
+
+        internal PageSetting SelectedDraftPage => _selectedDraftPage;
           
         public SettingsWindow(MainViewModel viewModel)
         {
@@ -19,12 +34,12 @@ namespace MiniDeck
             {
                 InitializeComponent();
                 _viewModel = viewModel;
+                _lastAppliedBackgroundImagePath = _viewModel.BackgroundImagePath;
                 DataContext = _viewModel;
 
                 InitializeSliderValues();
-                
-                // ボタンリストにデータをバインド
-                ButtonListView.ItemsSource = _viewModel.Buttons;
+                InitializeGeneralSettings();
+                ReloadPageDrafts(_viewModel.ActivePageId);
                 
                 // ラジオボタンのイベントハンドラーを設定
                 ColorRadioButton.Checked += BackgroundType_Changed;
@@ -40,26 +55,6 @@ namespace MiniDeck
                     ColorRadioButton.IsChecked = true;
                 }
                 
-                // 編集ボタンを追加
-                var editButton = new Button { Content = "編集", Width = 60, Margin = new Thickness(5) };
-                editButton.Click += EditButton_Click;
-                
-                var stackPanel = new StackPanel { 
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right
-                };
-                stackPanel.Children.Add(editButton);
-                
-                // ButtonListViewの親要素をUIツリーから正しく取得
-                var buttonSettingsGrid = ButtonListView.Parent as Grid;
-                
-                if (buttonSettingsGrid != null)
-                {
-                    Grid.SetRow(stackPanel, 0);
-                    Grid.SetColumn(stackPanel, 1);
-                    buttonSettingsGrid.Children.Add(stackPanel);
-                }
-                  
                 // すべてのコントロールが初期化された後にプレビューを設定
                 this.Loaded += (s, e) => 
                 {
@@ -100,10 +95,444 @@ namespace MiniDeck
             UpdateLayoutChangeHint();
         }
 
+        private void InitializeGeneralSettings()
+        {
+            AutoStartCheckBox.IsChecked = _viewModel.AutoStart;
+            AlwaysOnTopCheckBox.IsChecked = _viewModel.AlwaysOnTop;
+        }
+
+        private void PageSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isSwitchingDraftPage)
+            {
+                return;
+            }
+
+            PageSetting nextPage = PageSelector.SelectedItem as PageSetting;
+            if (nextPage == null || ReferenceEquals(nextPage, _selectedDraftPage))
+            {
+                UpdateDraftPageDisplay();
+                return;
+            }
+
+            CommitSelectedPageDraft();
+            SelectDraftPage(nextPage);
+        }
+
+        private void AddPage_Click(object sender, RoutedEventArgs e)
+        {
+            AddDraftPage();
+        }
+
+        internal PageSetting AddDraftPage()
+        {
+            CommitSelectedPageDraft();
+
+            var page = new PageSetting
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = CreateUniqueDraftPageName($"ページ {DraftPages.Count + 1}"),
+                Buttons = CreateEmptyDraftButtonSettings()
+            };
+
+            DraftPages.Add(page);
+            SelectDraftPage(page);
+            UpdateLayoutChangeHint();
+            return page;
+        }
+
+        private void DuplicatePage_Click(object sender, RoutedEventArgs e)
+        {
+            if (DuplicateSelectedDraftPage() == null)
+            {
+                MessageBox.Show(
+                    "複製するページを選択してください。",
+                    "ページを選択してください",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
+        internal PageSetting DuplicateSelectedDraftPage()
+        {
+            if (_selectedDraftPage == null)
+            {
+                return null;
+            }
+
+            CommitSelectedPageDraft();
+            string duplicateName = CreateUniqueDraftPageName(_selectedDraftPage.Name + " のコピー");
+            PageSetting duplicate = _selectedDraftPage.Clone(Guid.NewGuid().ToString("N"), duplicateName);
+            int sourceIndex = DraftPages.IndexOf(_selectedDraftPage);
+            DraftPages.Insert(sourceIndex + 1, duplicate);
+            SelectDraftPage(duplicate);
+            UpdateLayoutChangeHint();
+            return duplicate;
+        }
+
+        private void RenamePage_Click(object sender, RoutedEventArgs e)
+        {
+            string requestedName = PageNameTextBox.Text;
+            if (RenameSelectedDraftPage(requestedName))
+            {
+                return;
+            }
+
+            string message = string.IsNullOrWhiteSpace(requestedName)
+                ? "ページ名を入力してください。"
+                : "同じ名前のページが既にあります。別の名前を入力してください。";
+            MessageBox.Show(message, "ページ名を変更できません", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        internal bool RenameSelectedDraftPage(string newName)
+        {
+            string trimmedName = newName?.Trim();
+            if (_selectedDraftPage == null || string.IsNullOrWhiteSpace(trimmedName))
+            {
+                return false;
+            }
+
+            bool duplicateExists = DraftPages.Any(page =>
+                !ReferenceEquals(page, _selectedDraftPage) &&
+                string.Equals(page.Name, trimmedName, StringComparison.CurrentCultureIgnoreCase));
+            if (duplicateExists)
+            {
+                return false;
+            }
+
+            _selectedDraftPage.Name = trimmedName;
+            PageNameTextBox.Text = trimmedName;
+            UpdateDraftPageDisplay();
+            return true;
+        }
+
+        private void DeletePage_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedDraftPage == null)
+            {
+                return;
+            }
+
+            if (DraftPages.Count <= 1)
+            {
+                MessageBox.Show(
+                    "ページは最低1つ必要なため、このページは削除できません。",
+                    "ページを削除できません",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            CommitSelectedPageDraft();
+            int configuredButtonCount = GetConfiguredButtonCount(_selectedDraftPage);
+            MessageBoxResult result = MessageBox.Show(
+                $"ページ「{_selectedDraftPage.Name}」を削除しますか？\n\n設定済みのボタン {configuredButtonCount} 個も削除されます。",
+                "ページの削除",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (result == MessageBoxResult.Yes)
+            {
+                DeleteSelectedDraftPage();
+            }
+        }
+
+        internal bool DeleteSelectedDraftPage()
+        {
+            if (_selectedDraftPage == null || DraftPages.Count <= 1)
+            {
+                return false;
+            }
+
+            CommitSelectedPageDraft();
+            int removedIndex = DraftPages.IndexOf(_selectedDraftPage);
+            DraftPages.RemoveAt(removedIndex);
+            SelectDraftPage(DraftPages[Math.Min(removedIndex, DraftPages.Count - 1)]);
+            UpdateLayoutChangeHint();
+            return true;
+        }
+
+        private void ReorderPages_Click(object sender, RoutedEventArgs e)
+        {
+            CommitSelectedPageDraft();
+            var reorderWindow = new PageReorderWindow(DraftPages, _selectedDraftPage?.Id)
+            {
+                Owner = this
+            };
+
+            if (reorderWindow.ShowDialog() == true)
+            {
+                ApplyDraftPageOrder(reorderWindow.OrderedPages);
+            }
+        }
+
+        private void OpenImageManagement_Click(object sender, RoutedEventArgs e)
+        {
+            int selectedButtonIndex = DraftButtons.IndexOf(ButtonGrid.SelectedItem);
+            CommitSelectedPageDraft();
+            var imageWindow = new ImageManagementWindow(
+                DraftPages,
+                BackgroundImagePath.Text?.Trim() ?? "",
+                null,
+                null,
+                _viewModel.Pages,
+                _lastAppliedBackgroundImagePath)
+            {
+                Owner = this
+            };
+
+            if (imageWindow.ShowDialog() == true)
+            {
+                ApplyImagePathReplacements(imageWindow.Replacements, selectedButtonIndex);
+            }
+        }
+
+        internal int ApplyImagePathReplacements(
+            IEnumerable<ImagePathReplacement> replacements,
+            int selectedButtonIndex = 0)
+        {
+            int replacementCount = 0;
+            foreach (ImagePathReplacement replacement in replacements ?? Enumerable.Empty<ImagePathReplacement>())
+            {
+                if (replacement == null || string.IsNullOrWhiteSpace(replacement.OldPath) ||
+                    string.IsNullOrWhiteSpace(replacement.NewPath))
+                {
+                    continue;
+                }
+
+                if (replacement.Kind == ImageStorageKind.Background)
+                {
+                    if (string.Equals(
+                        BackgroundImagePath.Text?.Trim() ?? "",
+                        replacement.OldPath.Trim(),
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        _viewModel.BackgroundImagePath = replacement.NewPath;
+                        BackgroundImagePath.Text = replacement.NewPath;
+                        replacementCount++;
+                    }
+
+                    continue;
+                }
+
+                foreach (ButtonSetting button in DraftPages
+                    .SelectMany(page => page?.Buttons ?? new List<ButtonSetting>())
+                    .Where(button => button != null))
+                {
+                    if (string.Equals(
+                        button.ImagePath?.Trim() ?? "",
+                        replacement.OldPath.Trim(),
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        button.ImagePath = replacement.NewPath;
+                        replacementCount++;
+                    }
+
+                    if (string.Equals(
+                        button.StateActiveImagePath?.Trim() ?? "",
+                        replacement.OldPath.Trim(),
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        button.StateActiveImagePath = replacement.NewPath;
+                        replacementCount++;
+                    }
+                }
+            }
+
+            if (_selectedDraftPage != null)
+            {
+                LoadButtonDraftFromPage(_selectedDraftPage, selectedButtonIndex);
+            }
+
+            UpdateBackgroundPreview();
+            return replacementCount;
+        }
+
+        internal bool ApplyDraftPageOrder(IEnumerable<PageSetting> orderedPages)
+        {
+            List<PageSetting> requestedOrder = (orderedPages ?? Enumerable.Empty<PageSetting>())
+                .Where(page => page != null)
+                .ToList();
+            var currentPages = new HashSet<PageSetting>(DraftPages);
+            if (requestedOrder.Count != DraftPages.Count ||
+                requestedOrder.Distinct().Count() != requestedOrder.Count ||
+                requestedOrder.Any(page => !currentPages.Contains(page)))
+            {
+                return false;
+            }
+
+            CommitSelectedPageDraft();
+            PageSetting selectedPage = _selectedDraftPage;
+            _isSwitchingDraftPage = true;
+            try
+            {
+                DraftPages.Clear();
+                foreach (PageSetting page in requestedOrder)
+                {
+                    DraftPages.Add(page);
+                }
+
+                PageSelector.SelectedItem = selectedPage;
+            }
+            finally
+            {
+                _isSwitchingDraftPage = false;
+            }
+
+            UpdateDraftPageDisplay();
+            return true;
+        }
+
+        internal bool MoveSelectedDraftPage(int offset)
+        {
+            int currentIndex = _selectedDraftPage == null
+                ? -1
+                : DraftPages.IndexOf(_selectedDraftPage);
+            int targetIndex = currentIndex + offset;
+            if (offset == 0 || currentIndex < 0 || targetIndex < 0 || targetIndex >= DraftPages.Count)
+            {
+                return false;
+            }
+
+            CommitSelectedPageDraft();
+            PageSetting selectedPage = _selectedDraftPage;
+            _isSwitchingDraftPage = true;
+            try
+            {
+                DraftPages.Move(currentIndex, targetIndex);
+                PageSelector.SelectedItem = selectedPage;
+            }
+            finally
+            {
+                _isSwitchingDraftPage = false;
+            }
+
+            UpdateDraftPageDisplay();
+            return true;
+        }
+
+        private void CopyPage_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CopySelectedDraftPage())
+            {
+                MessageBox.Show(
+                    "コピーするページを選択してください。",
+                    "ページを選択してください",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
+        internal bool CopySelectedDraftPage()
+        {
+            if (_selectedDraftPage == null)
+            {
+                return false;
+            }
+
+            CommitSelectedPageDraft();
+            return EditorClipboard.CopyPage(_selectedDraftPage);
+        }
+
+        private void PastePage_Click(object sender, RoutedEventArgs e)
+        {
+            if (PasteCopiedDraftPage() == null)
+            {
+                MessageBox.Show(
+                    "コピーされたページがありません。先にページをコピーしてください。",
+                    "貼り付けできません",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
+        internal PageSetting PasteCopiedDraftPage()
+        {
+            PageSetting pastedPage = EditorClipboard.GetPageCopy();
+            if (pastedPage == null)
+            {
+                return null;
+            }
+
+            CommitSelectedPageDraft();
+            pastedPage.Id = Guid.NewGuid().ToString("N");
+            pastedPage.Name = CreateUniqueDraftPageName(
+                (string.IsNullOrWhiteSpace(pastedPage.Name) ? "新しいページ" : pastedPage.Name) + " のコピー");
+            pastedPage.Buttons = pastedPage.Buttons ?? new List<ButtonSetting>();
+            ResizeDraftButtonSettings(pastedPage.Buttons, Math.Max(1, _viewModel.ButtonRows * _viewModel.ButtonColumns));
+
+            int insertIndex = _selectedDraftPage == null
+                ? DraftPages.Count
+                : DraftPages.IndexOf(_selectedDraftPage) + 1;
+            DraftPages.Insert(insertIndex, pastedPage);
+            SelectDraftPage(pastedPage);
+            UpdateLayoutChangeHint();
+            return pastedPage;
+        }
+
+        private static int GetConfiguredButtonCount(PageSetting page)
+        {
+            return page?.Buttons?.Count(button => button != null && button.ActionType != ActionType.None) ?? 0;
+        }
+
+        private string CreateUniqueDraftPageName(string requestedName)
+        {
+            string baseName = string.IsNullOrWhiteSpace(requestedName) ? "新しいページ" : requestedName.Trim();
+            string candidate = baseName;
+            int suffix = 2;
+            while (DraftPages.Any(page => string.Equals(
+                page.Name,
+                candidate,
+                StringComparison.CurrentCultureIgnoreCase)))
+            {
+                candidate = $"{baseName} ({suffix})";
+                suffix++;
+            }
+
+            return candidate;
+        }
+
+        private List<ButtonSetting> CreateEmptyDraftButtonSettings()
+        {
+            int buttonCount = Math.Max(1, _viewModel.ButtonRows * _viewModel.ButtonColumns);
+            var buttons = new List<ButtonSetting>();
+            for (int index = 0; index < buttonCount; index++)
+            {
+                buttons.Add(new ButtonSetting
+                {
+                    DisplayText = $"ボタン {index + 1}",
+                    ActionType = ActionType.None
+                });
+            }
+
+            return buttons;
+        }
+
+        private static void ResizeDraftButtonSettings(List<ButtonSetting> buttons, int buttonCount)
+        {
+            if (buttons.Count > buttonCount)
+            {
+                buttons.RemoveRange(buttonCount, buttons.Count - buttonCount);
+            }
+
+            while (buttons.Count < buttonCount)
+            {
+                buttons.Add(new ButtonSetting
+                {
+                    DisplayText = $"ボタン {buttons.Count + 1}",
+                    ActionType = ActionType.None
+                });
+            }
+        }
+
         private void EditButton_Click(object sender, RoutedEventArgs e)
         {
-            // 選択されたボタンを編集
-            var selectedButton = ButtonListView.SelectedItem as ActionButton;
+            EditSelectedButton();
+        }
+
+        private void EditSelectedButton()
+        {
+            // 編集用コピーだけを変更し、「適用」または「OK」までViewModelへ反映しない
+            var selectedButton = ButtonGrid.SelectedItem;
             if (selectedButton == null) 
             {
                 MessageBox.Show("編集するボタンを選択してください", "選択エラー", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -112,15 +541,378 @@ namespace MiniDeck
             
             var buttonSettingsWindow = new ButtonSettingsWindow(selectedButton);
             buttonSettingsWindow.Owner = this;
-            var result = buttonSettingsWindow.ShowDialog();
-            
-            if (result == true)
+            buttonSettingsWindow.ShowDialog();
+        }
+
+        private void ButtonGrid_ItemActivated(object sender, ActionButton button)
+        {
+            ButtonGrid.SelectedItem = button;
+            EditSelectedButton();
+        }
+
+        private void ButtonGrid_ReorderRequested(object sender, ButtonReorderRequestedEventArgs e)
+        {
+            int sourceIndex = DraftButtons.IndexOf(e.Source);
+            int targetIndex = DraftButtons.IndexOf(e.Target);
+            SwapDraftButtons(sourceIndex, targetIndex);
+        }
+
+        private void ButtonGrid_ExternalDropRequested(object sender, ExternalButtonDropRequestedEventArgs e)
+        {
+            ButtonDropResult result = _buttonDropService.CreateButton(e.Data);
+            if (!result.Success)
             {
-                // ボタン設定が変更された場合、設定を保存
-                if (_viewModel != null)
+                MessageBox.Show(
+                    result.ErrorMessage,
+                    "登録できません",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            bool allowOverwrite = e.Target?.ActionType == ActionType.None;
+            if (!allowOverwrite)
+            {
+                MessageBoxResult overwriteResult = MessageBox.Show(
+                    $"「{e.Target.DisplayText}」の設定を「{result.Button.DisplayText}」で上書きしますか？",
+                    "ボタン設定の上書き",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                allowOverwrite = overwriteResult == MessageBoxResult.Yes;
+            }
+
+            ApplyDroppedButton(e.Target, result.Button, allowOverwrite);
+        }
+
+        internal bool ApplyDroppedButton(
+            ActionButton target,
+            ActionButton droppedButton,
+            bool allowOverwrite)
+        {
+            int targetIndex = DraftButtons.IndexOf(target);
+            if (targetIndex < 0 || droppedButton == null)
+            {
+                return false;
+            }
+
+            if (target.ActionType != ActionType.None && !allowOverwrite)
+            {
+                return false;
+            }
+
+            DraftButtons[targetIndex] = droppedButton;
+            ButtonGrid.SelectedItem = droppedButton;
+            return true;
+        }
+
+        private void MovePreviousButton_Click(object sender, RoutedEventArgs e)
+        {
+            int selectedIndex = DraftButtons.IndexOf(ButtonGrid.SelectedItem);
+            MoveDraftButton(selectedIndex, selectedIndex - 1);
+        }
+
+        private void MoveNextButton_Click(object sender, RoutedEventArgs e)
+        {
+            int selectedIndex = DraftButtons.IndexOf(ButtonGrid.SelectedItem);
+            MoveDraftButton(selectedIndex, selectedIndex + 1);
+        }
+
+        internal bool MoveDraftButton(int sourceIndex, int targetIndex)
+        {
+            if (sourceIndex < 0 || sourceIndex >= DraftButtons.Count ||
+                targetIndex < 0 || targetIndex >= DraftButtons.Count || sourceIndex == targetIndex)
+            {
+                return false;
+            }
+
+            ActionButton selectedButton = DraftButtons[sourceIndex];
+            DraftButtons.Move(sourceIndex, targetIndex);
+            ButtonGrid.SelectedItem = selectedButton;
+            return true;
+        }
+
+        internal bool SwapDraftButtons(int sourceIndex, int targetIndex)
+        {
+            if (sourceIndex < 0 || sourceIndex >= DraftButtons.Count ||
+                targetIndex < 0 || targetIndex >= DraftButtons.Count || sourceIndex == targetIndex)
+            {
+                return false;
+            }
+
+            ActionButton sourceButton = DraftButtons[sourceIndex];
+            ActionButton targetButton = DraftButtons[targetIndex];
+
+            DraftButtons[sourceIndex] = targetButton;
+            DraftButtons[targetIndex] = sourceButton;
+            ButtonGrid.SelectedItem = sourceButton;
+            return true;
+        }
+
+        private void CopyButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CopySelectedButton())
+            {
+                MessageBox.Show(
+                    "コピーするボタンを選択してください。",
+                    "ボタンを選択してください",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
+        internal bool CopySelectedButton()
+        {
+            return EditorClipboard.CopyButton(ButtonGrid.SelectedItem);
+        }
+
+        private void PasteButton_Click(object sender, RoutedEventArgs e)
+        {
+            ActionButton target = ButtonGrid.SelectedItem;
+            if (target == null)
+            {
+                MessageBox.Show(
+                    "貼り付け先のボタンを選択してください。",
+                    "ボタンを選択してください",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            if (!EditorClipboard.HasButton)
+            {
+                MessageBox.Show(
+                    "コピーされたボタンがありません。先にボタンをコピーしてください。",
+                    "貼り付けできません",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            bool allowOverwrite = target.ActionType == ActionType.None;
+            if (!allowOverwrite)
+            {
+                MessageBoxResult overwriteResult = MessageBox.Show(
+                    $"「{target.DisplayText}」の設定をコピーしたボタンで上書きしますか？",
+                    "ボタン設定の上書き",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                allowOverwrite = overwriteResult == MessageBoxResult.Yes;
+            }
+
+            PasteCopiedButton(allowOverwrite);
+        }
+
+        internal bool PasteCopiedButton(bool allowOverwrite)
+        {
+            ActionButton target = ButtonGrid.SelectedItem;
+            int targetIndex = DraftButtons.IndexOf(target);
+            ActionButton copiedButton = EditorClipboard.GetButtonCopy();
+            if (targetIndex < 0 || copiedButton == null)
+            {
+                return false;
+            }
+
+            if (target.ActionType != ActionType.None && !allowOverwrite)
+            {
+                return false;
+            }
+
+            DraftButtons[targetIndex] = copiedButton;
+            ButtonGrid.SelectedItem = copiedButton;
+            return true;
+        }
+
+        private void DuplicateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!DuplicateSelectedButton())
+            {
+                MessageBox.Show(
+                    ButtonGrid.SelectedItem == null
+                        ? "複製するボタンを選択してください"
+                        : "空きボタンがないため複製できません。先に不要なボタンをクリアしてください。",
+                    "複製できません",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+
+        internal bool DuplicateSelectedButton()
+        {
+            ActionButton source = ButtonGrid.SelectedItem;
+            int sourceIndex = DraftButtons.IndexOf(source);
+            if (sourceIndex < 0)
+            {
+                return false;
+            }
+
+            int emptyIndex = FindEmptyButtonIndex(sourceIndex + 1);
+            if (emptyIndex < 0)
+            {
+                emptyIndex = FindEmptyButtonIndex(0, sourceIndex);
+            }
+
+            if (emptyIndex < 0)
+            {
+                return false;
+            }
+
+            ActionButton duplicate = source.Clone();
+            if (!string.IsNullOrWhiteSpace(duplicate.DisplayText))
+            {
+                duplicate.DisplayText += " のコピー";
+            }
+
+            DraftButtons[emptyIndex] = duplicate;
+            ButtonGrid.SelectedItem = duplicate;
+            return true;
+        }
+
+        private int FindEmptyButtonIndex(int startIndex, int endIndex = int.MaxValue)
+        {
+            int lastIndex = Math.Min(endIndex, DraftButtons.Count);
+            for (int index = Math.Max(0, startIndex); index < lastIndex; index++)
+            {
+                if (DraftButtons[index]?.ActionType == ActionType.None)
                 {
-                    _viewModel.SaveSettings();
+                    return index;
                 }
+            }
+
+            return -1;
+        }
+
+        private void ClearButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!ClearSelectedButton())
+            {
+                MessageBox.Show("クリアするボタンを選択してください", "選択エラー", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        internal bool ClearSelectedButton()
+        {
+            int selectedIndex = DraftButtons.IndexOf(ButtonGrid.SelectedItem);
+            if (selectedIndex < 0)
+            {
+                return false;
+            }
+
+            var emptyButton = new ActionButton
+            {
+                DisplayText = $"ボタン {selectedIndex + 1}",
+                ActionType = ActionType.None
+            };
+            DraftButtons[selectedIndex] = emptyButton;
+            ButtonGrid.SelectedItem = emptyButton;
+            return true;
+        }
+
+        private void ReloadPageDrafts(string selectedPageId = null, int selectedButtonIndex = 0)
+        {
+            _isSwitchingDraftPage = true;
+            try
+            {
+                DraftPages.Clear();
+                foreach (PageSetting page in _viewModel?.Pages ?? new ObservableCollection<PageSetting>())
+                {
+                    PageSetting pageDraft = page?.Clone();
+                    if (pageDraft == null)
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(pageDraft.Id, _viewModel.ActivePageId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        pageDraft.Buttons = SettingsService.CreateButtonSettingsList(_viewModel.Buttons);
+                    }
+
+                    DraftPages.Add(pageDraft);
+                }
+
+                if (DraftPages.Count == 0)
+                {
+                    DraftPages.Add(new PageSetting
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Name = "メイン",
+                        Buttons = CreateEmptyDraftButtonSettings()
+                    });
+                }
+
+                PageSetting selectedPage = DraftPages.FirstOrDefault(page => string.Equals(
+                    page.Id,
+                    selectedPageId,
+                    StringComparison.OrdinalIgnoreCase)) ?? DraftPages[0];
+                PageSelector.SelectedItem = selectedPage;
+                _selectedDraftPage = selectedPage;
+                LoadButtonDraftFromPage(selectedPage, selectedButtonIndex);
+            }
+            finally
+            {
+                _isSwitchingDraftPage = false;
+            }
+
+            UpdateDraftPageDisplay();
+            UpdateLayoutChangeHint();
+        }
+
+        private void SelectDraftPage(PageSetting page, int selectedButtonIndex = 0)
+        {
+            if (page == null)
+            {
+                return;
+            }
+
+            _isSwitchingDraftPage = true;
+            try
+            {
+                PageSelector.SelectedItem = page;
+                _selectedDraftPage = page;
+                LoadButtonDraftFromPage(page, selectedButtonIndex);
+            }
+            finally
+            {
+                _isSwitchingDraftPage = false;
+            }
+
+            UpdateDraftPageDisplay();
+        }
+
+        private void LoadButtonDraftFromPage(PageSetting page, int selectedIndex = 0)
+        {
+            DraftButtons.Clear();
+            foreach (ButtonSetting button in page?.Buttons ?? new List<ButtonSetting>())
+            {
+                DraftButtons.Add(button?.ToActionButton() ?? new ActionButton());
+            }
+
+            if (ButtonGrid != null)
+            {
+                ButtonGrid.SelectedItem = DraftButtons.Count == 0
+                    ? null
+                    : DraftButtons[Math.Max(0, Math.Min(selectedIndex, DraftButtons.Count - 1))];
+            }
+        }
+
+        private void CommitSelectedPageDraft()
+        {
+            if (_selectedDraftPage != null)
+            {
+                _selectedDraftPage.Buttons = SettingsService.CreateButtonSettingsList(DraftButtons);
+            }
+        }
+
+        private void UpdateDraftPageDisplay()
+        {
+            if (PageNameTextBox != null)
+            {
+                PageNameTextBox.Text = _selectedDraftPage?.Name ?? "";
+            }
+
+            if (DraftPagePositionText != null)
+            {
+                int index = _selectedDraftPage == null ? -1 : DraftPages.IndexOf(_selectedDraftPage);
+                DraftPagePositionText.Text = index < 0 ? "" : $"{index + 1} / {DraftPages.Count}";
             }
         }
         
@@ -128,7 +920,7 @@ namespace MiniDeck
         {
             try
             {
-                if (!TryApplyPendingSliderSettings())
+                if (!TryApplyPendingSettings())
                 {
                     return;
                 }
@@ -148,7 +940,7 @@ namespace MiniDeck
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
-            // スライダーの値はViewModelへ未反映なので、そのまま破棄する
+            // 未適用のスライダー、一般設定、ボタンの編集用コピーを破棄する
             DialogResult = false;
             Close();
         }
@@ -157,7 +949,7 @@ namespace MiniDeck
         {
             try
             {
-                if (!TryApplyPendingSliderSettings())
+                if (!TryApplyPendingSettings())
                 {
                     return;
                 }
@@ -168,6 +960,7 @@ namespace MiniDeck
             catch (Exception ex)
             {
                 Console.WriteLine($"Apply_Click中にエラーが発生しました: {ex.Message}");
+                MessageBox.Show($"設定の適用中にエラーが発生しました: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         
@@ -279,25 +1072,28 @@ namespace MiniDeck
             int rows = (int)Math.Round(RowsSlider.Value);
             int columns = (int)Math.Round(ColumnsSlider.Value);
             int newButtonCount = rows * columns;
-            int currentButtonCount = _viewModel.Buttons?.Count ?? 0;
+            int currentButtonCount = DraftPages
+                .Select(page => page?.Buttons?.Count ?? 0)
+                .DefaultIfEmpty(DraftButtons.Count)
+                .Max();
 
             if (newButtonCount < currentButtonCount)
             {
                 int removedButtonCount = currentButtonCount - newButtonCount;
-                LayoutChangeHint.Text = $"合計 {newButtonCount} ボタン。適用すると末尾の {removedButtonCount} ボタン設定が削除されます。";
+                LayoutChangeHint.Text = $"各ページ {newButtonCount} ボタン。適用すると各ページ末尾の最大 {removedButtonCount} ボタン設定が削除されます。";
             }
             else if (newButtonCount > currentButtonCount)
             {
                 int addedButtonCount = newButtonCount - currentButtonCount;
-                LayoutChangeHint.Text = $"合計 {newButtonCount} ボタン。適用すると空のボタンが {addedButtonCount} 個追加されます。";
+                LayoutChangeHint.Text = $"各ページ {newButtonCount} ボタン。適用すると各ページへ空のボタンが {addedButtonCount} 個追加されます。";
             }
             else
             {
-                LayoutChangeHint.Text = $"合計 {newButtonCount} ボタン。現在のボタン数と同じです。";
+                LayoutChangeHint.Text = $"各ページ {newButtonCount} ボタン。現在のボタン数と同じです。";
             }
         }
 
-        private bool TryApplyPendingSliderSettings()
+        private bool TryApplyPendingSettings()
         {
             if (_viewModel == null)
             {
@@ -307,13 +1103,31 @@ namespace MiniDeck
             int rows = (int)Math.Round(RowsSlider.Value);
             int columns = (int)Math.Round(ColumnsSlider.Value);
             int newButtonCount = rows * columns;
-            int currentButtonCount = _viewModel.Buttons?.Count ?? 0;
+            CommitSelectedPageDraft();
+            int currentButtonCount = DraftPages
+                .Select(page => page?.Buttons?.Count ?? 0)
+                .DefaultIfEmpty(0)
+                .Max();
+
+            if (ImageRadioButton?.IsChecked == true)
+            {
+                string pendingImagePath = BackgroundImagePath.Text?.Trim() ?? "";
+                if (!ImageStorageService.TryResolveImagePath(pendingImagePath, out string _))
+                {
+                    MessageBox.Show(
+                        $"背景画像が見つかりません。画像を選択し直すか、背景色へ切り替えてください。\n\n保存されているパス:\n{pendingImagePath}",
+                        "背景画像を確認してください",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return false;
+                }
+            }
 
             if (newButtonCount < currentButtonCount)
             {
                 int removedButtonCount = currentButtonCount - newButtonCount;
                 MessageBoxResult result = MessageBox.Show(
-                    $"末尾の {removedButtonCount} ボタン設定が削除されます。続行しますか？",
+                    $"各ページで末尾の最大 {removedButtonCount} ボタン設定が削除されます。続行しますか？",
                     "ボタン数の確認",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
@@ -324,17 +1138,26 @@ namespace MiniDeck
                 }
             }
 
-            _viewModel.ApplyLayoutSettings(
+            string selectedPageId = _selectedDraftPage?.Id;
+            int selectedIndex = DraftButtons.IndexOf(ButtonGrid.SelectedItem);
+            _viewModel.ApplySettings(
                 rows,
                 columns,
                 OpacitySlider.Value,
-                ButtonOpacitySlider.Value);
+                ButtonOpacitySlider.Value,
+                AutoStartCheckBox.IsChecked == true,
+                AlwaysOnTopCheckBox.IsChecked == true,
+                null,
+                DraftPages,
+                selectedPageId);
 
             if (Owner is MainWindow mainWindow)
             {
-                mainWindow.ApplyLayoutFromSettings();
+                mainWindow.ApplyWindowSettingsFromViewModel();
             }
 
+            ReloadPageDrafts(selectedPageId, selectedIndex);
+            _lastAppliedBackgroundImagePath = _viewModel.BackgroundImagePath;
             UpdateLayoutChangeHint();
             return true;
         }
@@ -350,20 +1173,7 @@ namespace MiniDeck
                     return;
                 }
 
-                string fullPath;
-                if (imagePath.StartsWith("/"))
-                {
-                    // アプリケーションリソースを処理
-                    string appPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    string baseDir = System.IO.Path.GetDirectoryName(appPath);
-                    fullPath = baseDir + imagePath.Replace('/', '\\');
-                }
-                else
-                {
-                    fullPath = imagePath;
-                }
-
-                if (System.IO.File.Exists(fullPath))
+                if (ImageStorageService.TryResolveImagePath(imagePath, out string fullPath))
                 {
                     var bitmap = new System.Windows.Media.Imaging.BitmapImage();
                     bitmap.BeginInit();
@@ -436,28 +1246,10 @@ namespace MiniDeck
             {
                 try
                 {
-                    // 選択されたファイルのパス
-                    string selectedFilePath = dialog.FileName;
-                    // ファイル名を取得
-                    string fileName = System.IO.Path.GetFileName(selectedFilePath);
-                    
-                    // アプリケーションのリソースフォルダへのパス
-                    string resourceDir = System.IO.Path.Combine(
-                        System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
-                        "Resources", "Backgrounds");
-                    
-                    // リソースディレクトリが存在しない場合は作成
-                    if (!System.IO.Directory.Exists(resourceDir))
-                    {
-                        System.IO.Directory.CreateDirectory(resourceDir);
-                    }
-                    
-                    // ファイルをコピー
-                    string destPath = System.IO.Path.Combine(resourceDir, fileName);
-                    System.IO.File.Copy(selectedFilePath, destPath, true);
-                    
-                    // 相対パスとしてセット
-                    _viewModel.BackgroundImagePath = $"/Resources/Backgrounds/{fileName}";
+                    // ビルド出力ではなく、再ビルド後も残るユーザーデータ領域へ保存する
+                    _viewModel.BackgroundImagePath = ImageStorageService.ImportImage(
+                        dialog.FileName,
+                        ImageStorageKind.Background);
                     BackgroundImagePath.Text = _viewModel.BackgroundImagePath;
                       
                     // 背景画像ラジオボタンを選択してプレビューを更新
@@ -467,13 +1259,6 @@ namespace MiniDeck
                 catch (System.Exception ex)
                 {
                     MessageBox.Show($"画像の追加中にエラーが発生しました: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
-                    // エラー時は絶対パスをセット
-                    _viewModel.BackgroundImagePath = dialog.FileName;
-                    BackgroundImagePath.Text = _viewModel.BackgroundImagePath;
-                    
-                    // 背景画像ラジオボタンを選択してプレビューを更新
-                    ImageRadioButton.IsChecked = true;
-                    UpdateBackgroundPreview();
                 }
             }
         }
@@ -517,20 +1302,9 @@ namespace MiniDeck
                     // 背景画像を適用
                     try
                     {
-                        string fullPath;
-                        if (_viewModel.BackgroundImagePath.StartsWith("/"))
-                        {
-                            // アプリケーションリソースを処理
-                            string appPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                            string baseDir = System.IO.Path.GetDirectoryName(appPath);
-                            fullPath = baseDir + _viewModel.BackgroundImagePath.Replace('/', '\\');
-                        }
-                        else
-                        {
-                            fullPath = _viewModel.BackgroundImagePath;
-                        }
-                        
-                        if (System.IO.File.Exists(fullPath))
+                        if (ImageStorageService.TryResolveImagePath(
+                            _viewModel.BackgroundImagePath,
+                            out string fullPath))
                         {                            
                             ImageBrush imageBrush = new ImageBrush
                             {
@@ -544,7 +1318,8 @@ namespace MiniDeck
                         }
                         else
                         {
-                            MessageBox.Show("指定された画像ファイルが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            // TryApplyPendingSettingsで検証済み。適用直前に削除された場合だけ記録する。
+                            Console.WriteLine($"背景画像が適用直前に見つからなくなりました: {_viewModel.BackgroundImagePath}");
                         }
                     }
                     catch (Exception ex)

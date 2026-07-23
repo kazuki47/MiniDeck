@@ -11,7 +11,7 @@
         Width="500"
         WindowStartupLocation="CenterOwner"
         Background="#E5333333" Foreground="White"
-        SizeToContent="WidthAndHeight" MinHeight="450" MinWidth="500">
+        SizeToContent="WidthAndHeight" MinHeight="450" MinWidth="500" MaxHeight="720">
     
     <Window.Resources>        <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="White"/>
@@ -37,7 +37,9 @@
             <Setter Property="Padding" Value="5,3"/>
             <Setter Property="Margin" Value="0,5"/>
         </Style>
-    </Window.Resources>    <Grid Margin="15">
+    </Window.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <Grid Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -63,7 +65,8 @@
         <ComboBox Grid.Row="1" Grid.Column="1" x:Name="ActionTypeCombo" SelectionChanged="ActionTypeCombo_SelectionChanged">
             <ComboBoxItem Content="なし" Tag="{x:Static models:ActionType.None}"/>
             <ComboBoxItem Content="キーボードショートカット" Tag="{x:Static models:ActionType.KeyPress}"/>
-            <ComboBoxItem Content="アプリケーション起動" Tag="{x:Static models:ActionType.LaunchApplication}"/>
+            <ComboBoxItem Content="アプリ・ファイルを開く" Tag="{x:Static models:ActionType.LaunchApplication}"/>
+            <ComboBoxItem Content="URLを開く" Tag="{x:Static models:ActionType.OpenUrl}"/>
         </ComboBox>
         
         <!-- キーボードショートカット設定 -->
@@ -108,7 +111,7 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="アプリパス:" Margin="0,5,10,5"/>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="対象パス:" Margin="0,5,10,5"/>
                 <TextBox Grid.Row="0" Grid.Column="1" x:Name="ApplicationPathBox" MinWidth="280"/>
                 <Button Grid.Row="0" Grid.Column="2" Content="参照..." Width="70" Margin="5,0,0,0" Click="BrowseApp_Click"/>
                 
@@ -116,12 +119,39 @@
                 <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="ArgumentsBox"/>
             </Grid>
         </Border>
+
+        <!-- URL設定 -->
+        <Border Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" x:Name="UrlPanel" Visibility="Collapsed"
+                Margin="0,10,0,0" Padding="10" Background="#20FFFFFF" CornerRadius="5">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="URL:" Margin="0,5,10,5"/>
+                <TextBox Grid.Row="0" Grid.Column="1" x:Name="UrlBox" MinWidth="250"
+                         ToolTip="https://example.com のように入力してください"
+                         TextChanged="UrlBox_TextChanged"/>
+                <Button Grid.Row="0" Grid.Column="2" x:Name="TestUrlButton" Content="テスト実行"
+                        Width="85" Margin="5,0,0,0" Click="TestUrl_Click"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" x:Name="UrlValidationText"
+                           Text="※ http:// または https:// で始まるURLを入力してください"
+                           Opacity="0.8" Margin="0,5,0,0" FontSize="11"/>
+            </Grid>
+        </Border>
         
         <!-- 画像設定 -->
-        <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Text="ボタン画像設定" Margin="0,20,0,5" 
+        <TextBlock Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Text="ボタン画像設定" Margin="0,20,0,5"
                    FontWeight="Bold"/>
         
-        <Border Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,0" 
+        <Border Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,0,0"
                 Padding="10" Background="#20FFFFFF" CornerRadius="5">
             <Grid>
                 <Grid.RowDefinitions>
@@ -148,10 +178,99 @@
                            Stretch="Uniform"/>
                 </Border>
             </Grid>
-        </Border>        <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" 
+        </Border>
+
+        <Border Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,15,0,0"
+                Padding="10" Background="#20FFFFFF" CornerRadius="5">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="状態表示:" Margin="0,5,10,5" FontWeight="Bold"/>
+                <ComboBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="StateTypeCombo"
+                          SelectionChanged="StateTypeCombo_SelectionChanged">
+                    <ComboBoxItem Content="使用しない" Tag="{x:Static models:ButtonStateDisplayType.None}"/>
+                    <ComboBoxItem Content="アプリの起動状態" Tag="{x:Static models:ButtonStateDisplayType.ApplicationRunning}"/>
+                    <ComboBoxItem Content="マイクのミュート状態" Tag="{x:Static models:ButtonStateDisplayType.MicrophoneMuted}"/>
+                    <ComboBoxItem Content="システム音声のミュート状態" Tag="{x:Static models:ButtonStateDisplayType.SystemAudioMuted}"/>
+                </ComboBox>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" x:Name="StateTypeHint"
+                           Margin="0,4,0,8" Opacity="0.75" FontSize="11"
+                           Text="状態表示を有効にすると、1秒ごとにWindowsの状態を確認します。"/>
+
+                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" x:Name="StateOptionsPanel">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="120"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="状態ONの表示名:" Margin="0,5,10,5"/>
+                    <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="StateActiveTextBox"
+                             MinWidth="250" ToolTip="空の場合は通常の表示名を使用します"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="状態ONの画像:" Margin="0,5,10,5"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="StateActiveImagePathBox" MinWidth="220"
+                             TextChanged="StateActiveImagePathBox_TextChanged"
+                             ToolTip="空の場合は通常のボタン画像を使用します"/>
+                    <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Margin="5,0,0,0">
+                        <Border Width="34" Height="34" Margin="0,0,5,0" Background="#30FFFFFF"
+                                BorderBrush="#60FFFFFF" BorderThickness="1">
+                            <Image x:Name="StateActiveImagePreview" Margin="2" Stretch="Uniform"/>
+                        </Border>
+                        <Button Content="参照..." Width="70" Click="BrowseStateActiveImage_Click"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="状態ONの色:" Margin="0,5,10,5"/>
+                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="StateActiveColorBox" MinWidth="220"
+                             TextChanged="StateColorBox_TextChanged"/>
+                    <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" Margin="5,0,0,0">
+                        <Border x:Name="StateActiveColorPreview" Width="34" Height="26" Margin="0,0,5,0"
+                                BorderBrush="White" BorderThickness="1"/>
+                        <Button Content="色を選択..." Width="85" Click="SelectStateActiveColor_Click"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="状態OFFの色:" Margin="0,5,10,5"/>
+                    <TextBox Grid.Row="3" Grid.Column="1" x:Name="StateInactiveColorBox" MinWidth="220"
+                             TextChanged="StateColorBox_TextChanged"/>
+                    <StackPanel Grid.Row="3" Grid.Column="2" Orientation="Horizontal" Margin="5,0,0,0">
+                        <Border x:Name="StateInactiveColorPreview" Width="34" Height="26" Margin="0,0,5,0"
+                                BorderBrush="White" BorderThickness="1"/>
+                        <Button Content="色を選択..." Width="85" Click="SelectStateInactiveColor_Click"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,6,0,0"
+                               Opacity="0.7" FontSize="11"
+                               Text="※ 状態を取得できない場合は、通常の表示名・画像と透明背景を使用します。"/>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2"
                     Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,25,0,5">
             <Button Content="OK" Width="100" Margin="0,0,15,0" Click="OK_Click"/>
             <Button Content="キャンセル" Width="100" Click="Cancel_Click"/>
         </StackPanel>
     </Grid>
+    </ScrollViewer>
 </Window>

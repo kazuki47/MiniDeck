@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 
@@ -33,6 +34,9 @@ namespace MiniDeck.ViewModels
     public class MainViewModel : INotifyPropertyChanged
     {
         private readonly ActionService _actionService;
+        private readonly string _settingsFilePath;
+        private bool _isLoadingSettings;
+        private bool _isSettingsReadOnly;
 
         // マウスイベントをキャッチするためのダミーコマンド
         public ICommand PlaceholderCommand { get; private set; }
@@ -40,7 +44,41 @@ namespace MiniDeck.ViewModels
         // 設定保存コマンド
         public ICommand SaveSettingsCommand { get; private set; }
 
+        public ICommand PreviousPageCommand { get; private set; }
+        public ICommand NextPageCommand { get; private set; }
+
         public ObservableCollection<ActionButton> Buttons { get; set; }
+
+        public ObservableCollection<PageSetting> Pages { get; private set; }
+
+        private PageSetting _activePage;
+        public PageSetting ActivePage
+        {
+            get => _activePage;
+            private set
+            {
+                if (!ReferenceEquals(_activePage, value))
+                {
+                    _activePage = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(ActivePageId));
+                    OnPropertyChanged(nameof(ActivePageName));
+                    NotifyPageNavigationChanged();
+                }
+            }
+        }
+
+        public string ActivePageId => ActivePage?.Id ?? "";
+        public string ActivePageName => ActivePage?.Name ?? "";
+        public int PageCount => Pages?.Count ?? 0;
+        public int ActivePageIndex => ActivePage == null || Pages == null
+            ? -1
+            : Pages.IndexOf(ActivePage);
+        public int ActivePageNumber => ActivePageIndex < 0 ? 0 : ActivePageIndex + 1;
+        public string ActivePagePositionText => $"{ActivePageNumber} / {PageCount}";
+        public bool HasMultiplePages => PageCount > 1;
+        public bool CanMoveToPreviousPage => ActivePageIndex > 0;
+        public bool CanMoveToNextPage => ActivePageIndex >= 0 && ActivePageIndex < PageCount - 1;
         
         private int _buttonRows = 2; // デフォルト値
         public int ButtonRows
@@ -74,7 +112,7 @@ namespace MiniDeck.ViewModels
             }
         }
           
-        private string _backgroundColor = "#FF000000"; // デフォルト値
+        private string _backgroundColor = "#FFFFFFFF"; // デフォルトは白
         public string BackgroundColor
         {
             get => _backgroundColor;
@@ -97,7 +135,7 @@ namespace MiniDeck.ViewModels
                 SaveSettings(); // 設定を保存
             }
         }
-          private double _backgroundOpacity = 0.0; // デフォルト値を0%に設定（完全に透明）
+          private double _backgroundOpacity = 1.0; // デフォルトは不透明
         public double BackgroundOpacity
         {
             get => _backgroundOpacity;
@@ -154,6 +192,12 @@ namespace MiniDeck.ViewModels
                 SaveSettings(); // 設定を保存
             }
         }
+
+        private bool _alwaysOnTop = true;
+        public bool AlwaysOnTop => _alwaysOnTop;
+
+        private bool _autoStart;
+        public bool AutoStart => _autoStart;
         
         private string _statusText = "Ready"; // ステータステキストのデフォルト値
         public string StatusText
@@ -168,16 +212,56 @@ namespace MiniDeck.ViewModels
             double backgroundOpacity,
             double buttonOpacity)
         {
+            ApplySettings(
+                buttonRows,
+                buttonColumns,
+                backgroundOpacity,
+                buttonOpacity,
+                AutoStart,
+                AlwaysOnTop);
+        }
+
+        public void ApplySettings(
+            int buttonRows,
+            int buttonColumns,
+            double backgroundOpacity,
+            double buttonOpacity,
+            bool autoStart,
+            bool alwaysOnTop,
+            IEnumerable<ActionButton> activePageButtons = null,
+            IEnumerable<PageSetting> pageSettings = null,
+            string activePageId = null)
+        {
             buttonRows = Math.Max(1, Math.Min(3, buttonRows));
             buttonColumns = Math.Max(1, Math.Min(5, buttonColumns));
             backgroundOpacity = Math.Max(0.0, Math.Min(1.0, backgroundOpacity));
             buttonOpacity = Math.Max(0.0, Math.Min(1.0, buttonOpacity));
 
+            bool pagesChanged = pageSettings != null;
+            List<PageSetting> pendingPages = pagesChanged
+                ? CreateNormalizedPageSettings(pageSettings, buttonRows * buttonColumns)
+                : null;
+            List<ButtonSetting> pendingButtonSettings = pagesChanged || activePageButtons == null
+                ? null
+                : CreateNormalizedButtonSettings(activePageButtons, buttonRows * buttonColumns);
+
             bool layoutChanged = _buttonRows != buttonRows || _buttonColumns != buttonColumns;
+            bool buttonsChanged = pendingButtonSettings != null &&
+                                  !ButtonSettingsMatch(Buttons, pendingButtonSettings);
             bool backgroundOpacityChanged = Math.Abs(_backgroundOpacity - backgroundOpacity) > 0.0001;
             bool buttonOpacityChanged = Math.Abs(_buttonOpacity - buttonOpacity) > 0.0001;
+            bool autoStartChanged = _autoStart != autoStart;
+            bool alwaysOnTopChanged = _alwaysOnTop != alwaysOnTop;
 
-            if (!layoutChanged && !backgroundOpacityChanged && !buttonOpacityChanged)
+            // 有効時は古い実行ファイルへの登録も修復する。無効かつ変更なしならレジストリへ触れない。
+            // レジストリ更新に失敗した場合は、他の設定を変更する前に呼び出し元へ通知する。
+            if (autoStart || autoStartChanged)
+            {
+                AutoStartService.Apply(autoStart);
+            }
+
+            if (!layoutChanged && !buttonsChanged && !backgroundOpacityChanged && !buttonOpacityChanged &&
+                !autoStartChanged && !alwaysOnTopChanged && !pagesChanged)
             {
                 return;
             }
@@ -189,8 +273,41 @@ namespace MiniDeck.ViewModels
                 OnPropertyChanged(nameof(ButtonRows));
                 OnPropertyChanged(nameof(ButtonColumns));
 
-                // 行列をまとめて更新してから、一度だけボタン数を調整する
-                UpdateButtons();
+                // ページ全体を受け取った場合は、この後まとめて各ページを差し替える
+                if (!pagesChanged && pendingButtonSettings != null)
+                {
+                    LoadButtonsFromSettings(pendingButtonSettings);
+                }
+                else if (!pagesChanged)
+                {
+                    UpdateButtons();
+                }
+
+                if (!pagesChanged)
+                {
+                    ResizeInactivePagesToLayout();
+                }
+            }
+            else if (!pagesChanged && buttonsChanged)
+            {
+                LoadButtonsFromSettings(pendingButtonSettings);
+            }
+
+            if (pagesChanged)
+            {
+                Pages.Clear();
+                foreach (PageSetting page in pendingPages)
+                {
+                    Pages.Add(page);
+                }
+
+                PageSetting selectedPage = Pages.FirstOrDefault(page => string.Equals(
+                    page.Id,
+                    activePageId,
+                    StringComparison.OrdinalIgnoreCase)) ?? Pages[0];
+                ActivePage = selectedPage;
+                LoadButtonsFromSettings(selectedPage.Buttons);
+                NotifyPageNavigationChanged();
             }
 
             if (backgroundOpacityChanged)
@@ -205,41 +322,79 @@ namespace MiniDeck.ViewModels
                 OnPropertyChanged(nameof(ButtonOpacity));
             }
 
-            // スライダー操作中は保存せず、適用時に一度だけ保存する
+            if (autoStartChanged)
+            {
+                _autoStart = autoStart;
+                OnPropertyChanged(nameof(AutoStart));
+            }
+
+            if (alwaysOnTopChanged)
+            {
+                _alwaysOnTop = alwaysOnTop;
+                OnPropertyChanged(nameof(AlwaysOnTop));
+            }
+
+            // 設定画面での操作中は保存せず、適用時に一度だけ保存する
             SaveSettings();
         }
 
         public MainViewModel()
+            : this(null)
+        {
+        }
+
+        public MainViewModel(string settingsFilePath)
         {
             Console.WriteLine("MainViewModel: コンストラクタが呼び出されました");
             _actionService = new ActionService();
+            _settingsFilePath = settingsFilePath;
             Buttons = new ObservableCollection<ActionButton>();
+            Pages = new ObservableCollection<PageSetting>();
+            Pages.CollectionChanged += (sender, args) => NotifyPageNavigationChanged();
             
             // コマンドの初期化
             PlaceholderCommand = new RelayCommand(ExecutePlaceholderCommand);
             SaveSettingsCommand = new RelayCommand(_ => SaveSettings());
+            PreviousPageCommand = new RelayCommand(
+                _ => MoveToPreviousPage(),
+                _ => CanMoveToPreviousPage);
+            NextPageCommand = new RelayCommand(
+                _ => MoveToNextPage(),
+                _ => CanMoveToNextPage);
             
             // 設定ファイルの確認
-            string settingsPath = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "MiniDeck", "settings.xml");
+            string settingsPath = string.IsNullOrWhiteSpace(_settingsFilePath)
+                ? System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "MiniDeck", "settings.xml")
+                : System.IO.Path.GetFullPath(_settingsFilePath);
             bool fileExists = System.IO.File.Exists(settingsPath);
             Console.WriteLine($"MainViewModel初期化時: 設定ファイル存在={fileExists}, パス={settingsPath}");
-            
-            // 設定を読み込む
-            LoadSettings();
-            
-            // 設定が読み込めなかった場合はデフォルトのボタンをロード
-            if (Buttons.Count == 0)
+
+            _isLoadingSettings = true;
+            try
             {
-                Console.WriteLine("設定が読み込めなかったため、デフォルトボタンをロードします");
-                LoadDefaultButtons();
+                // 設定を読み込む
+                LoadSettings();
+
+                // 設定が読み込めなかった場合はデフォルトのボタンをロード
+                if (Buttons.Count == 0)
+                {
+                    Console.WriteLine("設定が読み込めなかったため、デフォルトボタンをロードします");
+                    LoadDefaultButtons();
+                }
+
+                EnsurePageCollection();
+                SyncActivePageButtons();
             }
-            else
+            finally
             {
-                Console.WriteLine($"設定から{Buttons.Count}個のボタンを読み込みました");
+                _isLoadingSettings = false;
             }
-              // 初期化後に保存を実行して設定ファイルを確実に作成
+
+            Console.WriteLine($"設定から{Buttons.Count}個のボタンと{Pages.Count}ページを読み込みました");
+
+            // 初期化後に一度だけ保存を実行して設定ファイルを確実に作成
             Console.WriteLine("MainViewModel初期化完了後、設定保存を実行します");
             try 
             {
@@ -253,13 +408,28 @@ namespace MiniDeck.ViewModels
         }// 設定を保存する
         public void SaveSettings()
         {
+            if (_isLoadingSettings)
+            {
+                return;
+            }
+
+            if (_isSettingsReadOnly)
+            {
+                Console.WriteLine("設定は読み取り専用で読み込まれているため保存をスキップします。");
+                return;
+            }
+
             try
             {
                 Console.WriteLine("アプリケーション設定を保存中...");
-                
+
+                EnsurePageCollection();
+                SyncActivePageButtons();
+
                 // 現在の設定を取得
                 var settings = new AppSettings
                 {
+                    SettingsVersion = AppSettings.CurrentSettingsVersion,
                     ButtonRows = ButtonRows,
                     ButtonColumns = ButtonColumns,
                     BackgroundColor = BackgroundColor,
@@ -267,59 +437,20 @@ namespace MiniDeck.ViewModels
                     BackgroundOpacity = BackgroundOpacity,
                     ButtonOpacity = ButtonOpacity,
                     UseBackgroundImage = UseBackgroundImage,
-                    AlwaysOnTop = true, // 常に最前面表示
-                    Buttons = new List<MiniDeck.Models.ButtonSetting>()
+                    AlwaysOnTop = AlwaysOnTop,
+                    AutoStart = AutoStart,
+                    ActivePageId = ActivePageId,
+                    Pages = Pages.Select(page => page.Clone()).ToList(),
+                    Buttons = new List<ButtonSetting>()
                 };
 
-                // ボタン設定を追加
-                Console.WriteLine($"保存するボタン数: {Buttons.Count}個");
-                int index = 0;
-                
-                foreach (var button in Buttons)
-                {
-                    try
-                    {
-                        // ButtonSettingオブジェクトを作成
-                        var buttonSetting = new MiniDeck.Models.ButtonSetting
-                        {
-                            DisplayText = button.DisplayText,
-                            ImagePath = button.ImagePath,
-                            ActionType = button.ActionType,
-                            ShortcutKeySequence = button.ShortcutKeySequence,
-                            ApplicationPath = button.ApplicationPath,
-                            ApplicationArguments = button.ApplicationArguments
-                        };
-                        
-                        // アプリケーション起動の場合、詳細をログに出力
-                        if (button.ActionType == ActionType.LaunchApplication)
-                        {
-                            Console.WriteLine($"ボタン[{index}] 保存中: \"{button.DisplayText}\", アプリケーションパス: \"{button.ApplicationPath}\"");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"ボタン[{index}] 保存中: \"{button.DisplayText}\", アクションタイプ: {button.ActionType}");
-                        }
-                        
-                        settings.Buttons.Add(buttonSetting);
-                        index++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"ボタン[{index}]の保存中にエラーが発生: {ex.Message}");
-                    }
-                }
-                
-                // 設定保存パスの取得
-                string settingsPath = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "MiniDeck", "settings.xml");
-                Console.WriteLine($"設定保存先: {settingsPath}");
-                
                 // 設定を保存
-                bool result = MiniDeck.Services.SettingsService.SaveSettings(settings);
+                bool result = string.IsNullOrWhiteSpace(_settingsFilePath)
+                    ? SettingsService.SaveSettings(settings)
+                    : SettingsService.SaveSettings(settings, _settingsFilePath);
                 if (result)
                 {
-                    Console.WriteLine($"設定を正常に保存しました。ボタン設定: {settings.Buttons.Count}個");
+                    Console.WriteLine($"設定を正常に保存しました。ページ: {settings.Pages.Count}、現在のボタン: {Buttons.Count}個");
                 }
                 else
                 {
@@ -336,18 +467,17 @@ namespace MiniDeck.ViewModels
         {
             try
             {
-                // 設定ファイルのパスを取得して確認
-                string settingsPath = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "MiniDeck", "settings.xml");
-                
-                Console.WriteLine($"設定ファイルを読み込みます: {settingsPath}");
-                bool fileExists = System.IO.File.Exists(settingsPath);
-                Console.WriteLine($"設定ファイルの存在: {fileExists}");
-                
                 // 設定を読み込み
-                var settings = MiniDeck.Services.SettingsService.LoadSettings();
-                
+                var settings = string.IsNullOrWhiteSpace(_settingsFilePath)
+                    ? SettingsService.LoadSettings()
+                    : SettingsService.LoadSettings(_settingsFilePath);
+
+                _isSettingsReadOnly = settings.IsReadOnly;
+                if (!string.IsNullOrWhiteSpace(settings.LoadWarning))
+                {
+                    Console.WriteLine(settings.LoadWarning);
+                }
+
                 // 読み込んだ設定を適用
                 ButtonRows = settings.ButtonRows;
                 ButtonColumns = settings.ButtonColumns;
@@ -356,22 +486,34 @@ namespace MiniDeck.ViewModels
                 BackgroundOpacity = settings.BackgroundOpacity;
                 ButtonOpacity = settings.ButtonOpacity;
                 UseBackgroundImage = settings.UseBackgroundImage;
-                
-                // ボタン数のチェック
-                Console.WriteLine($"読み込まれたボタン設定の数: {settings.Buttons?.Count ?? 0}");
-                
-                // ボタンを読み込み
-                if (settings.Buttons != null && settings.Buttons.Count > 0)
+
+                _alwaysOnTop = settings.AlwaysOnTop;
+                _autoStart = AutoStartService.IsEnabled();
+                OnPropertyChanged(nameof(AlwaysOnTop));
+                OnPropertyChanged(nameof(AutoStart));
+
+                Pages.Clear();
+                foreach (PageSetting page in settings.Pages ?? new List<PageSetting>())
                 {
-                    LoadButtonsFromSettings(settings.Buttons);
-                    Console.WriteLine("ボタン設定を読み込みました");
+                    Pages.Add(page.Clone());
+                }
+
+                EnsurePageCollection();
+                ActivePage = Pages.FirstOrDefault(page => string.Equals(
+                    page.Id,
+                    settings.ActivePageId,
+                    StringComparison.OrdinalIgnoreCase)) ?? Pages[0];
+
+                if (ActivePage.Buttons != null && ActivePage.Buttons.Count > 0)
+                {
+                    LoadButtonsFromSettings(ActivePage.Buttons);
                 }
                 else
                 {
-                    Console.WriteLine("ボタン設定がないため、デフォルトのボタンをロードします");
                     LoadDefaultButtons();
                 }
-                
+
+                SyncActivePageButtons();
                 Console.WriteLine("設定の読み込みが完了しました");
             }
             catch (Exception ex)
@@ -384,14 +526,21 @@ namespace MiniDeck.ViewModels
         private void LoadButtonsFromSettings(List<MiniDeck.Models.ButtonSetting> buttonSettings)
         {
             Console.WriteLine("ボタン設定からボタンを読み込み中...");
-            
+            int totalButtons = ButtonRows * ButtonColumns;
+
             // コレクションをクリア
             Buttons.Clear();
             
             // 読み込んだボタン設定からボタンを作成
             int index = 0;
-            foreach (var buttonSetting in buttonSettings)
+            foreach (var buttonSettingValue in buttonSettings ?? new List<ButtonSetting>())
             {
+                if (index >= totalButtons)
+                {
+                    break;
+                }
+
+                var buttonSetting = buttonSettingValue ?? new ButtonSetting();
                 try
                 {
                     Console.WriteLine($"ボタン[{index}] 読み込み中: 表示テキスト=\"{buttonSetting.DisplayText}\", アクションタイプ={buttonSetting.ActionType}");
@@ -404,7 +553,17 @@ namespace MiniDeck.ViewModels
                         ActionType = buttonSetting.ActionType,
                         ShortcutKeySequence = buttonSetting.ShortcutKeySequence,
                         ApplicationPath = buttonSetting.ApplicationPath,
-                        ApplicationArguments = buttonSetting.ApplicationArguments
+                        ApplicationArguments = buttonSetting.ApplicationArguments,
+                        Url = buttonSetting.Url,
+                        StateDisplayType = buttonSetting.StateDisplayType,
+                        StateActiveDisplayText = buttonSetting.StateActiveDisplayText,
+                        StateActiveImagePath = buttonSetting.StateActiveImagePath,
+                        StateActiveBackgroundColor = string.IsNullOrWhiteSpace(buttonSetting.StateActiveBackgroundColor)
+                            ? "#CC2E7D32"
+                            : buttonSetting.StateActiveBackgroundColor,
+                        StateInactiveBackgroundColor = string.IsNullOrWhiteSpace(buttonSetting.StateInactiveBackgroundColor)
+                            ? "#403F3F46"
+                            : buttonSetting.StateInactiveBackgroundColor
                     };
                     
                     // ボタンのクリックコマンドを設定
@@ -422,6 +581,7 @@ namespace MiniDeck.ViewModels
                     // ボタンのプロパティ変更イベントを監視して自動保存（インデックスキャプチャ問題を回避）
                     int capturedIndex = index; // ローカル変数でインデックスをキャプチャ
                     button.PropertyChanged += (sender, e) => {
+                        if (ActionButton.IsRuntimeProperty(e.PropertyName)) return;
                         Console.WriteLine($"ボタン[{capturedIndex}]のプロパティ{e.PropertyName}が変更されました - 設定を保存します");
                         SaveSettings();
                     };
@@ -436,7 +596,6 @@ namespace MiniDeck.ViewModels
             
             Console.WriteLine($"読み込まれたボタン: {Buttons.Count}個");
               // ボタン不足分を補充
-            int totalButtons = ButtonRows * ButtonColumns;
             for (int i = Buttons.Count; i < totalButtons; i++)
             {
                 try
@@ -456,6 +615,7 @@ namespace MiniDeck.ViewModels
                     // プロパティ変更イベントの監視
                     int capturedIndex = i;
                     newButton.PropertyChanged += (sender, e) => {
+                        if (ActionButton.IsRuntimeProperty(e.PropertyName)) return;
                         Console.WriteLine($"デフォルトボタン[{capturedIndex}]のプロパティ{e.PropertyName}が変更されました - 設定を保存します");
                         SaveSettings();
                     };
@@ -469,6 +629,418 @@ namespace MiniDeck.ViewModels
             }
             
             Console.WriteLine($"合計ボタン数: {Buttons.Count}個");
+        }
+
+        public PageSetting AddPage(string name = null)
+        {
+            EnsurePageCollection();
+            SyncActivePageButtons();
+
+            var page = new PageSetting
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = CreateUniquePageName(string.IsNullOrWhiteSpace(name) ? $"ページ {Pages.Count + 1}" : name.Trim()),
+                Buttons = CreateEmptyButtonSettings()
+            };
+
+            Pages.Add(page);
+            SetActivePageCore(page);
+            OnPropertyChanged(nameof(PageCount));
+            SaveSettings();
+            return page;
+        }
+
+        public PageSetting DuplicatePage(string pageId, string name = null)
+        {
+            EnsurePageCollection();
+            SyncActivePageButtons();
+
+            PageSetting sourcePage = FindPage(pageId);
+            if (sourcePage == null)
+            {
+                return null;
+            }
+
+            string duplicateName = CreateUniquePageName(
+                string.IsNullOrWhiteSpace(name) ? sourcePage.Name + " のコピー" : name.Trim());
+            PageSetting duplicatePage = sourcePage.Clone(Guid.NewGuid().ToString("N"), duplicateName);
+            ResizeButtonSettings(duplicatePage.Buttons, ButtonRows * ButtonColumns);
+
+            int sourceIndex = Pages.IndexOf(sourcePage);
+            Pages.Insert(sourceIndex + 1, duplicatePage);
+            SetActivePageCore(duplicatePage);
+            OnPropertyChanged(nameof(PageCount));
+            SaveSettings();
+            return duplicatePage;
+        }
+
+        public bool RenamePage(string pageId, string newName)
+        {
+            PageSetting page = FindPage(pageId);
+            string trimmedName = newName?.Trim();
+            if (page == null || string.IsNullOrWhiteSpace(trimmedName))
+            {
+                return false;
+            }
+
+            if (Pages.Any(other => !ReferenceEquals(other, page) &&
+                string.Equals(other.Name, trimmedName, StringComparison.CurrentCultureIgnoreCase)))
+            {
+                return false;
+            }
+
+            if (string.Equals(page.Name, trimmedName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            page.Name = trimmedName;
+            if (ReferenceEquals(page, ActivePage))
+            {
+                OnPropertyChanged(nameof(ActivePageName));
+            }
+
+            SaveSettings();
+            return true;
+        }
+
+        public bool SetActivePage(string pageId)
+        {
+            PageSetting page = FindPage(pageId);
+            if (page == null)
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(page, ActivePage))
+            {
+                return true;
+            }
+
+            SyncActivePageButtons();
+            SetActivePageCore(page);
+            SaveSettings();
+            return true;
+        }
+
+        public bool MoveToPreviousPage()
+        {
+            return MoveActivePage(-1);
+        }
+
+        public bool MoveToNextPage()
+        {
+            return MoveActivePage(1);
+        }
+
+        public int GetConfiguredButtonCount(string pageId)
+        {
+            if (string.Equals(pageId, ActivePageId, StringComparison.OrdinalIgnoreCase))
+            {
+                SyncActivePageButtons();
+            }
+
+            PageSetting page = FindPage(pageId);
+            return page?.Buttons?.Count(button => button != null && button.ActionType != ActionType.None) ?? 0;
+        }
+
+        public bool DeletePage(string pageId)
+        {
+            EnsurePageCollection();
+            if (Pages.Count <= 1)
+            {
+                return false;
+            }
+
+            SyncActivePageButtons();
+            PageSetting page = FindPage(pageId);
+            if (page == null)
+            {
+                return false;
+            }
+
+            int removedIndex = Pages.IndexOf(page);
+            bool deletedActivePage = ReferenceEquals(page, ActivePage);
+            Pages.Remove(page);
+
+            if (deletedActivePage)
+            {
+                int nextIndex = Math.Min(removedIndex, Pages.Count - 1);
+                SetActivePageCore(Pages[nextIndex]);
+            }
+
+            OnPropertyChanged(nameof(PageCount));
+            SaveSettings();
+            return true;
+        }
+
+        private void EnsurePageCollection()
+        {
+            if (Pages == null)
+            {
+                Pages = new ObservableCollection<PageSetting>();
+                OnPropertyChanged(nameof(Pages));
+            }
+
+            if (Pages.Count == 0)
+            {
+                Pages.Add(new PageSetting
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = "メイン",
+                    Buttons = Buttons != null && Buttons.Count > 0
+                        ? SettingsService.CreateButtonSettingsList(Buttons)
+                        : new List<ButtonSetting>()
+                });
+                OnPropertyChanged(nameof(PageCount));
+            }
+
+            if (ActivePage == null || !Pages.Contains(ActivePage))
+            {
+                ActivePage = Pages[0];
+            }
+        }
+
+        private void SyncActivePageButtons()
+        {
+            if (ActivePage == null)
+            {
+                return;
+            }
+
+            ActivePage.Buttons = SettingsService.CreateButtonSettingsList(Buttons);
+        }
+
+        private void SetActivePageCore(PageSetting page)
+        {
+            ActivePage = page;
+            LoadButtonsFromSettings(page.Buttons ?? new List<ButtonSetting>());
+        }
+
+        private bool MoveActivePage(int offset)
+        {
+            EnsurePageCollection();
+
+            int targetIndex = ActivePageIndex + offset;
+            if (offset == 0 || targetIndex < 0 || targetIndex >= PageCount)
+            {
+                return false;
+            }
+
+            return SetActivePage(Pages[targetIndex].Id);
+        }
+
+        private void NotifyPageNavigationChanged()
+        {
+            OnPropertyChanged(nameof(PageCount));
+            OnPropertyChanged(nameof(ActivePageIndex));
+            OnPropertyChanged(nameof(ActivePageNumber));
+            OnPropertyChanged(nameof(ActivePagePositionText));
+            OnPropertyChanged(nameof(HasMultiplePages));
+            OnPropertyChanged(nameof(CanMoveToPreviousPage));
+            OnPropertyChanged(nameof(CanMoveToNextPage));
+            CommandManager.InvalidateRequerySuggested();
+        }
+
+        private PageSetting FindPage(string pageId)
+        {
+            if (string.IsNullOrWhiteSpace(pageId) || Pages == null)
+            {
+                return null;
+            }
+
+            return Pages.FirstOrDefault(page => string.Equals(
+                page.Id,
+                pageId,
+                StringComparison.OrdinalIgnoreCase));
+        }
+
+        private string CreateUniquePageName(string requestedName)
+        {
+            string baseName = string.IsNullOrWhiteSpace(requestedName) ? "新しいページ" : requestedName.Trim();
+            string candidate = baseName;
+            int suffix = 2;
+
+            while (Pages.Any(page => string.Equals(page.Name, candidate, StringComparison.CurrentCultureIgnoreCase)))
+            {
+                candidate = $"{baseName} ({suffix})";
+                suffix++;
+            }
+
+            return candidate;
+        }
+
+        private static List<ButtonSetting> CreateNormalizedButtonSettings(
+            IEnumerable<ActionButton> buttons,
+            int totalButtons)
+        {
+            var normalizedButtons = new List<ButtonSetting>();
+            foreach (ActionButton button in buttons ?? Enumerable.Empty<ActionButton>())
+            {
+                if (normalizedButtons.Count >= totalButtons)
+                {
+                    break;
+                }
+
+                normalizedButtons.Add(ButtonSetting.FromActionButton(button) ?? new ButtonSetting
+                {
+                    DisplayText = $"ボタン {normalizedButtons.Count + 1}",
+                    ActionType = ActionType.None
+                });
+            }
+
+            while (normalizedButtons.Count < totalButtons)
+            {
+                normalizedButtons.Add(new ButtonSetting
+                {
+                    DisplayText = $"ボタン {normalizedButtons.Count + 1}",
+                    ActionType = ActionType.None
+                });
+            }
+
+            return normalizedButtons;
+        }
+
+        private static List<PageSetting> CreateNormalizedPageSettings(
+            IEnumerable<PageSetting> pages,
+            int totalButtons)
+        {
+            var normalizedPages = new List<PageSetting>();
+            var usedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var usedNames = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+
+            foreach (PageSetting sourcePage in pages ?? Enumerable.Empty<PageSetting>())
+            {
+                if (sourcePage == null)
+                {
+                    continue;
+                }
+
+                PageSetting page = sourcePage.Clone();
+                string requestedId = page.Id?.Trim();
+                if (string.IsNullOrWhiteSpace(requestedId) || !usedIds.Add(requestedId))
+                {
+                    do
+                    {
+                        requestedId = Guid.NewGuid().ToString("N");
+                    }
+                    while (!usedIds.Add(requestedId));
+                }
+
+                page.Id = requestedId;
+                string baseName = string.IsNullOrWhiteSpace(page.Name)
+                    ? $"ページ {normalizedPages.Count + 1}"
+                    : page.Name.Trim();
+                string uniqueName = baseName;
+                int suffix = 2;
+                while (!usedNames.Add(uniqueName))
+                {
+                    uniqueName = $"{baseName} ({suffix})";
+                    suffix++;
+                }
+
+                page.Name = uniqueName;
+                page.Buttons = page.Buttons ?? new List<ButtonSetting>();
+                ResizeButtonSettings(page.Buttons, totalButtons);
+                normalizedPages.Add(page);
+            }
+
+            if (normalizedPages.Count == 0)
+            {
+                var page = new PageSetting
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = "メイン",
+                    Buttons = new List<ButtonSetting>()
+                };
+                ResizeButtonSettings(page.Buttons, totalButtons);
+                normalizedPages.Add(page);
+            }
+
+            return normalizedPages;
+        }
+
+        private static bool ButtonSettingsMatch(
+            IList<ActionButton> buttons,
+            IList<ButtonSetting> buttonSettings)
+        {
+            if (buttons == null || buttonSettings == null || buttons.Count != buttonSettings.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < buttons.Count; index++)
+            {
+                ActionButton button = buttons[index] ?? new ActionButton();
+                ButtonSetting setting = buttonSettings[index] ?? new ButtonSetting();
+                if (!string.Equals(button.DisplayText ?? "", setting.DisplayText ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.ImagePath ?? "", setting.ImagePath ?? "", StringComparison.Ordinal) ||
+                    button.ActionType != setting.ActionType ||
+                    !string.Equals(button.ShortcutKeySequence ?? "", setting.ShortcutKeySequence ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.ApplicationPath ?? "", setting.ApplicationPath ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.ApplicationArguments ?? "", setting.ApplicationArguments ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.Url ?? "", setting.Url ?? "", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private List<ButtonSetting> CreateEmptyButtonSettings()
+        {
+            var buttons = new List<ButtonSetting>();
+            int totalButtons = ButtonRows * ButtonColumns;
+            for (int index = 0; index < totalButtons; index++)
+            {
+                buttons.Add(new ButtonSetting
+                {
+                    DisplayText = $"ボタン {index + 1}",
+                    ActionType = ActionType.None
+                });
+            }
+
+            return buttons;
+        }
+
+        private void ResizeInactivePagesToLayout()
+        {
+            if (Pages == null)
+            {
+                return;
+            }
+
+            int totalButtons = ButtonRows * ButtonColumns;
+            foreach (PageSetting page in Pages)
+            {
+                if (!ReferenceEquals(page, ActivePage))
+                {
+                    ResizeButtonSettings(page.Buttons, totalButtons);
+                }
+            }
+        }
+
+        private static void ResizeButtonSettings(List<ButtonSetting> buttons, int totalButtons)
+        {
+            if (buttons == null)
+            {
+                return;
+            }
+
+            if (buttons.Count > totalButtons)
+            {
+                buttons.RemoveRange(totalButtons, buttons.Count - totalButtons);
+            }
+
+            while (buttons.Count < totalButtons)
+            {
+                buttons.Add(new ButtonSetting
+                {
+                    DisplayText = $"ボタン {buttons.Count + 1}",
+                    ActionType = ActionType.None
+                });
+            }
         }
 
         // マウスイベントをキャッチするためのダミーメソッド
@@ -533,6 +1105,7 @@ namespace MiniDeck.ViewModels
                 // ボタンのプロパティ変更イベントを監視して自動保存
                 int capturedIndex = i; // ローカル変数でキャプチャ
                 newButton.PropertyChanged += (sender, e) => {
+                    if (ActionButton.IsRuntimeProperty(e.PropertyName)) return;
                     Console.WriteLine($"デフォルトボタン[{capturedIndex}]のプロパティ{e.PropertyName}が変更されました - 設定を保存します");
                     SaveSettings();
                 };
@@ -585,6 +1158,7 @@ namespace MiniDeck.ViewModels
                     // 新規ボタンにもPropertyChangedイベントハンドラを設定
                     int capturedIndex = i; // ローカル変数でキャプチャ
                     newButton.PropertyChanged += (sender, e) => {
+                        if (ActionButton.IsRuntimeProperty(e.PropertyName)) return;
                         Console.WriteLine($"新規ボタン[{capturedIndex}]のプロパティ{e.PropertyName}が変更されました - 設定を保存します");
                         SaveSettings();
                     };
@@ -608,7 +1182,11 @@ namespace MiniDeck.ViewModels
                     break;
                 case ActionType.LaunchApplication:
                     _actionService.LaunchApplication(button.ApplicationPath, button.ApplicationArguments);
-                    break;                case ActionType.None:
+                    break;
+                case ActionType.OpenUrl:
+                    _actionService.OpenUrl(button.Url);
+                    break;
+                case ActionType.None:
                     // アクションなし - 何もしない（メッセージボックスは表示しない）
                     break;
             }

@@ -3,13 +3,15 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Windows;
+using System.Linq;
+using System.Text;
+using System.Xml;
 using System.Xml.Serialization;
 
 namespace MiniDeck.Services
 {
     /// <summary>
-    /// アプリケーション設定の保存と読み込みを行うサービスクラス
+    /// アプリケーション設定の保存、バックアップ、バージョン移行を行う。
     /// </summary>
     public class SettingsService
     {
@@ -17,65 +19,71 @@ namespace MiniDeck.Services
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "MiniDeck", "settings.xml");
 
-        /// <summary>
-        /// アプリケーション設定を保存する
-        /// </summary>
-        /// <param name="settings">保存する設定</param>
-        /// <returns>保存に成功したかどうか</returns>
         public static bool SaveSettings(AppSettings settings)
         {
+            return SaveSettings(settings, SettingsFilePath);
+        }
+
+        public static bool SaveSettings(AppSettings settings, string settingsFilePath)
+        {
+            string temporaryFilePath = null;
+
             try
             {
-                Console.WriteLine("SettingsService.SaveSettings: 保存処理を開始します");
-                
-                // 設定ファイルのディレクトリを作成
-                string directory = Path.GetDirectoryName(SettingsFilePath);
-                Console.WriteLine($"設定ディレクトリ: {directory}");
-                
-                if (!Directory.Exists(directory))
+                if (settings == null)
                 {
-                    Console.WriteLine("設定ディレクトリが存在しないため作成します");
-                    Directory.CreateDirectory(directory);
-                    Console.WriteLine($"設定ディレクトリを作成しました: {directory}");
+                    throw new ArgumentNullException(nameof(settings));
+                }
+
+                if (string.IsNullOrWhiteSpace(settingsFilePath))
+                {
+                    throw new ArgumentException("設定ファイルのパスが指定されていません。", nameof(settingsFilePath));
+                }
+
+                if (settings.IsReadOnly || settings.SettingsVersion > AppSettings.CurrentSettingsVersion)
+                {
+                    Console.WriteLine("新しい形式または復旧用の設定は安全のため上書きしません。");
+                    return false;
+                }
+
+                NormalizeSettings(settings);
+
+                string fullSettingsPath = Path.GetFullPath(settingsFilePath);
+                string directory = Path.GetDirectoryName(fullSettingsPath);
+                if (string.IsNullOrWhiteSpace(directory))
+                {
+                    throw new InvalidOperationException("設定ディレクトリを取得できませんでした。");
+                }
+
+                Directory.CreateDirectory(directory);
+                temporaryFilePath = Path.Combine(
+                    directory,
+                    Path.GetFileName(fullSettingsPath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+
+                SerializeSettings(settings, temporaryFilePath);
+
+                // 一時ファイルを再読込し、不完全なXMLで本体を置換しないようにする。
+                AppSettings verificationSettings = DeserializeSettings(temporaryFilePath);
+                if (verificationSettings == null ||
+                    verificationSettings.SettingsVersion != AppSettings.CurrentSettingsVersion ||
+                    verificationSettings.Pages == null || verificationSettings.Pages.Count == 0)
+                {
+                    throw new InvalidDataException("保存前の設定ファイル検証に失敗しました。");
+                }
+
+                if (File.Exists(fullSettingsPath))
+                {
+                    File.Copy(fullSettingsPath, GetBackupFilePath(fullSettingsPath), true);
+                    File.Replace(temporaryFilePath, fullSettingsPath, null, true);
                 }
                 else
                 {
-                    Console.WriteLine("設定ディレクトリは既に存在します");
-                }
-                
-                // 保存前のボタン情報をログ出力
-                Console.WriteLine($"保存するボタン設定数: {settings.Buttons?.Count ?? 0}");
-                if (settings.Buttons != null)
-                {
-                    for (int i = 0; i < settings.Buttons.Count && i < 5; i++) // 最初の5個のみ表示
-                    {
-                        var btn = settings.Buttons[i];
-                        Console.WriteLine($"  ボタン[{i}]: {btn.DisplayText}, タイプ: {btn.ActionType}, アプリ: {btn.ApplicationPath}");
-                    }
-                }                // XMLシリアライザを使用して設定を保存（UTF-8エンコーディングでBOMなし）
-                Console.WriteLine($"XMLファイルに保存中: {SettingsFilePath}");
-                var xmlSettings = new System.Xml.XmlWriterSettings
-                {
-                    Encoding = new System.Text.UTF8Encoding(false), // BOMなしUTF-8
-                    Indent = true,
-                    IndentChars = "  ",
-                    OmitXmlDeclaration = false
-                };
-                
-                using (var fileStream = new FileStream(SettingsFilePath, FileMode.Create, FileAccess.Write))
-                using (var xmlWriter = System.Xml.XmlWriter.Create(fileStream, xmlSettings))
-                {
-                    var serializer = new XmlSerializer(typeof(AppSettings));
-                    serializer.Serialize(xmlWriter, settings);
-                    xmlWriter.Flush();
+                    File.Move(temporaryFilePath, fullSettingsPath);
                 }
 
-                // 保存後の確認
-                bool fileExists = File.Exists(SettingsFilePath);
-                long fileSize = fileExists ? new FileInfo(SettingsFilePath).Length : 0;
-                Console.WriteLine($"設定を保存しました: {SettingsFilePath}");
-                Console.WriteLine($"ファイル存在: {fileExists}, サイズ: {fileSize} バイト");
-                
+                temporaryFilePath = null;
+                Console.WriteLine($"設定を保存しました: {fullSettingsPath}");
+                Console.WriteLine($"保存したページ数: {settings.Pages.Count}");
                 return true;
             }
             catch (Exception ex)
@@ -84,82 +92,306 @@ namespace MiniDeck.Services
                 Console.WriteLine($"スタックトレース: {ex.StackTrace}");
                 return false;
             }
-        }
-
-        /// <summary>
-        /// アプリケーション設定を読み込む
-        /// </summary>
-        /// <returns>読み込んだ設定、または新しい設定</returns>
-        public static AppSettings LoadSettings()
-        {
-            try
+            finally
             {
-                Console.WriteLine("SettingsService.LoadSettings: 読み込み処理を開始します");
-                Console.WriteLine($"設定ファイルパス: {SettingsFilePath}");
-                
-                // ファイルが存在しない場合はデフォルト設定を返す
-                if (!File.Exists(SettingsFilePath))
+                if (!string.IsNullOrWhiteSpace(temporaryFilePath) && File.Exists(temporaryFilePath))
                 {
-                    Console.WriteLine("設定ファイルが見つからないため、デフォルト設定を使用します");
-                    var defaultSettings = new AppSettings();
-                    Console.WriteLine($"デフォルト設定のボタン数: {defaultSettings.Buttons?.Count ?? 0}");
-                    return defaultSettings;
-                }
-
-                // ファイル情報を出力
-                var fileInfo = new FileInfo(SettingsFilePath);
-                Console.WriteLine($"設定ファイル情報 - サイズ: {fileInfo.Length} バイト, 更新日時: {fileInfo.LastWriteTime}");                // XMLシリアライザを使用して設定を読み込む（UTF-8エンコーディングで）
-                Console.WriteLine("XMLファイルから設定を読み込み中...");
-                AppSettings settings;
-                
-                using (var fileStream = new FileStream(SettingsFilePath, FileMode.Open, FileAccess.Read))
-                {
-                    // UTF-8でファイルを読み込み
-                    var serializer = new XmlSerializer(typeof(AppSettings));
-                    settings = (AppSettings)serializer.Deserialize(fileStream);
-                }
-                
-                Console.WriteLine($"設定を読み込みました: {SettingsFilePath}");
-                Console.WriteLine($"読み込んだボタン設定数: {settings.Buttons?.Count ?? 0}");
-                
-                // 読み込んだボタン情報をログ出力
-                if (settings.Buttons != null)
-                {
-                    for (int i = 0; i < settings.Buttons.Count && i < 5; i++) // 最初の5個のみ表示
+                    try
                     {
-                        var btn = settings.Buttons[i];
-                        Console.WriteLine($"  読み込みボタン[{i}]: {btn.DisplayText}, タイプ: {btn.ActionType}, アプリ: {btn.ApplicationPath}");
+                        File.Delete(temporaryFilePath);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        Console.WriteLine($"一時設定ファイルを削除できませんでした: {cleanupException.Message}");
                     }
                 }
-                
-                return settings;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"設定の読み込み中にエラーが発生しました: {ex.Message}");
-                Console.WriteLine($"スタックトレース: {ex.StackTrace}");
-                
-                // エラーが発生した場合はデフォルト設定を返す
-                Console.WriteLine("エラーのため、デフォルト設定を返します");
-                return new AppSettings();
             }
         }
 
-        /// <summary>
-        /// AppSettingsからButtonSettingsリストを作成する
-        /// </summary>
-        /// <param name="buttons">ActionButtonのコレクション</param>
-        /// <returns>ButtonSettingのリスト</returns>
+        public static AppSettings LoadSettings()
+        {
+            return LoadSettings(SettingsFilePath);
+        }
+
+        public static AppSettings LoadSettings(string settingsFilePath)
+        {
+            string fullSettingsPath = Path.GetFullPath(settingsFilePath);
+            Console.WriteLine($"設定ファイルを読み込みます: {fullSettingsPath}");
+
+            if (!File.Exists(fullSettingsPath))
+            {
+                var defaultSettings = new AppSettings();
+                NormalizeSettings(defaultSettings);
+                return defaultSettings;
+            }
+
+            try
+            {
+                AppSettings settings = DeserializeSettings(fullSettingsPath);
+                if (settings.SettingsVersion > AppSettings.CurrentSettingsVersion)
+                {
+                    settings.IsReadOnly = true;
+                    settings.LoadWarning =
+                        $"この設定は新しいバージョン（{settings.SettingsVersion}）で作成されているため上書きしません。";
+                    Console.WriteLine(settings.LoadWarning);
+                    return settings;
+                }
+
+                bool migrationRequired = NormalizeSettings(settings);
+                if (migrationRequired)
+                {
+                    string migrationBackupPath = GetMigrationBackupFilePath(fullSettingsPath);
+                    if (!CreateMigrationBackup(fullSettingsPath, migrationBackupPath))
+                    {
+                        settings.IsReadOnly = true;
+                        settings.LoadWarning = "移行前バックアップを作成できなかったため、設定を上書きしません。";
+                        return settings;
+                    }
+
+                    if (!SaveSettings(settings, fullSettingsPath))
+                    {
+                        settings.IsReadOnly = true;
+                        settings.LoadWarning = "設定の移行保存に失敗したため、元ファイルを保持して読み取り専用で使用します。";
+                        Console.WriteLine(settings.LoadWarning);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"設定をバージョン{AppSettings.CurrentSettingsVersion}へ移行しました。");
+                    }
+                }
+
+                return settings;
+            }
+            catch (Exception primaryException)
+            {
+                Console.WriteLine($"設定の読み込み中にエラーが発生しました: {primaryException.Message}");
+
+                string backupFilePath = GetBackupFilePath(fullSettingsPath);
+                if (File.Exists(backupFilePath))
+                {
+                    try
+                    {
+                        AppSettings backupSettings = DeserializeSettings(backupFilePath);
+                        if (backupSettings.SettingsVersion <= AppSettings.CurrentSettingsVersion)
+                        {
+                            NormalizeSettings(backupSettings);
+                        }
+
+                        backupSettings.IsReadOnly = true;
+                        backupSettings.LoadWarning =
+                            "設定本体を読み込めなかったため、バックアップを読み取り専用で使用しています。";
+                        Console.WriteLine(backupSettings.LoadWarning);
+                        return backupSettings;
+                    }
+                    catch (Exception backupException)
+                    {
+                        Console.WriteLine($"バックアップ設定も読み込めませんでした: {backupException.Message}");
+                    }
+                }
+
+                var safeDefaults = new AppSettings
+                {
+                    IsReadOnly = true,
+                    LoadWarning = "設定を読み込めなかったため、安全のため自動保存を停止しています。"
+                };
+                NormalizeSettings(safeDefaults);
+                safeDefaults.IsReadOnly = true;
+                return safeDefaults;
+            }
+        }
+
+        public static string GetBackupFilePath(string settingsFilePath)
+        {
+            return Path.GetFullPath(settingsFilePath) + ".bak";
+        }
+
+        public static string GetMigrationBackupFilePath(string settingsFilePath)
+        {
+            string fullSettingsPath = Path.GetFullPath(settingsFilePath);
+            string directory = Path.GetDirectoryName(fullSettingsPath);
+            string fileName = Path.GetFileNameWithoutExtension(fullSettingsPath);
+            string extension = Path.GetExtension(fullSettingsPath);
+            return Path.Combine(
+                directory,
+                fileName + $".pre-v{AppSettings.CurrentSettingsVersion}" + extension);
+        }
+
         public static List<ButtonSetting> CreateButtonSettingsList(ObservableCollection<ActionButton> buttons)
         {
             var buttonSettings = new List<ButtonSetting>();
-            
+            if (buttons == null)
+            {
+                return buttonSettings;
+            }
+
             foreach (var button in buttons)
             {
                 buttonSettings.Add(ButtonSetting.FromActionButton(button));
             }
-            
+
             return buttonSettings;
+        }
+
+        private static bool NormalizeSettings(AppSettings settings)
+        {
+            bool changed = settings.SettingsVersion != AppSettings.CurrentSettingsVersion;
+            settings.Pages = settings.Pages ?? new List<PageSetting>();
+            List<ButtonSetting> legacyButtons = settings.Buttons ?? new List<ButtonSetting>();
+
+            if (settings.Pages.Count == 0)
+            {
+                settings.Pages.Add(new PageSetting
+                {
+                    Name = "メイン",
+                    Buttons = legacyButtons
+                        .Select(button => button?.Clone() ?? new ButtonSetting())
+                        .ToList()
+                });
+                changed = true;
+            }
+            else if (legacyButtons.Count > 0)
+            {
+                PageSetting firstPage = settings.Pages.FirstOrDefault(page => page != null);
+                if (firstPage != null && (firstPage.Buttons == null || firstPage.Buttons.Count == 0))
+                {
+                    firstPage.Buttons = legacyButtons
+                        .Select(button => button?.Clone() ?? new ButtonSetting())
+                        .ToList();
+                }
+                else
+                {
+                    settings.Pages.Add(new PageSetting
+                    {
+                        Name = "移行されたボタン",
+                        Buttons = legacyButtons
+                            .Select(button => button?.Clone() ?? new ButtonSetting())
+                            .ToList()
+                    });
+                }
+
+                changed = true;
+            }
+
+            var normalizedPages = new List<PageSetting>();
+            var usedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int pageNumber = 1;
+
+            foreach (PageSetting pageValue in settings.Pages)
+            {
+                PageSetting page = pageValue ?? new PageSetting();
+                if (pageValue == null)
+                {
+                    changed = true;
+                }
+
+                if (string.IsNullOrWhiteSpace(page.Id) || !usedIds.Add(page.Id))
+                {
+                    page.Id = Guid.NewGuid().ToString("N");
+                    usedIds.Add(page.Id);
+                    changed = true;
+                }
+
+                if (string.IsNullOrWhiteSpace(page.Name))
+                {
+                    page.Name = $"ページ {pageNumber}";
+                    changed = true;
+                }
+                else
+                {
+                    string trimmedName = page.Name.Trim();
+                    if (!string.Equals(trimmedName, page.Name, StringComparison.Ordinal))
+                    {
+                        page.Name = trimmedName;
+                        changed = true;
+                    }
+                }
+
+                if (page.Buttons == null)
+                {
+                    page.Buttons = new List<ButtonSetting>();
+                    changed = true;
+                }
+
+                for (int index = 0; index < page.Buttons.Count; index++)
+                {
+                    if (page.Buttons[index] == null)
+                    {
+                        page.Buttons[index] = new ButtonSetting();
+                        changed = true;
+                    }
+                }
+
+                normalizedPages.Add(page);
+                pageNumber++;
+            }
+
+            settings.Pages = normalizedPages;
+            if (settings.Pages.All(page => !string.Equals(
+                page.Id,
+                settings.ActivePageId,
+                StringComparison.OrdinalIgnoreCase)))
+            {
+                settings.ActivePageId = settings.Pages[0].Id;
+                changed = true;
+            }
+
+            if (legacyButtons.Count > 0)
+            {
+                settings.Buttons = new List<ButtonSetting>();
+                changed = true;
+            }
+            else if (settings.Buttons == null)
+            {
+                settings.Buttons = new List<ButtonSetting>();
+            }
+
+            settings.SettingsVersion = AppSettings.CurrentSettingsVersion;
+            return changed;
+        }
+
+        private static bool CreateMigrationBackup(string sourcePath, string backupPath)
+        {
+            try
+            {
+                if (!File.Exists(backupPath))
+                {
+                    File.Copy(sourcePath, backupPath, false);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"移行前バックアップを作成できませんでした: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static void SerializeSettings(AppSettings settings, string filePath)
+        {
+            var xmlSettings = new XmlWriterSettings
+            {
+                Encoding = new UTF8Encoding(false),
+                Indent = true,
+                IndentChars = "  ",
+                OmitXmlDeclaration = false
+            };
+
+            using (var fileStream = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var xmlWriter = XmlWriter.Create(fileStream, xmlSettings))
+            {
+                var serializer = new XmlSerializer(typeof(AppSettings));
+                serializer.Serialize(xmlWriter, settings);
+            }
+        }
+
+        private static AppSettings DeserializeSettings(string filePath)
+        {
+            using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var serializer = new XmlSerializer(typeof(AppSettings));
+                return (AppSettings)serializer.Deserialize(fileStream);
+            }
         }
     }
 }

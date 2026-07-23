@@ -1,13 +1,12 @@
 using Microsoft.Win32;
 using MiniDeck.Models;
-using MiniDeck.ViewModels;
+using MiniDeck.Services;
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace MiniDeck
@@ -16,6 +15,7 @@ namespace MiniDeck
     {
         public ActionButton Button { get; private set; }
         private bool _isCapturingKey = false;
+        private readonly ActionService _actionService = new ActionService();
 
         public ButtonSettingsWindow(ActionButton button)
         {
@@ -30,6 +30,15 @@ namespace MiniDeck
             ShortcutKeyBox.Text = button.ShortcutKeySequence;
             ApplicationPathBox.Text = button.ApplicationPath;
             ArgumentsBox.Text = button.ApplicationArguments;
+            UrlBox.Text = button.Url;
+            StateActiveTextBox.Text = button.StateActiveDisplayText;
+            StateActiveImagePathBox.Text = button.StateActiveImagePath;
+            StateActiveColorBox.Text = string.IsNullOrWhiteSpace(button.StateActiveBackgroundColor)
+                ? "#CC2E7D32"
+                : button.StateActiveBackgroundColor;
+            StateInactiveColorBox.Text = string.IsNullOrWhiteSpace(button.StateInactiveBackgroundColor)
+                ? "#403F3F46"
+                : button.StateInactiveBackgroundColor;
             
             // 画像プレビューを更新
             UpdateImagePreview(button.ImagePath);
@@ -45,10 +54,17 @@ namespace MiniDeck
                     ActionTypeCombo.SelectedIndex = 2;
                     AppLaunchPanel.Visibility = Visibility.Visible;
                     break;
+                case ActionType.OpenUrl:
+                    ActionTypeCombo.SelectedIndex = 3;
+                    UrlPanel.Visibility = Visibility.Visible;
+                    break;
                 default:
                     ActionTypeCombo.SelectedIndex = 0;
                     break;
             }
+            SelectStateDisplayType(button.StateDisplayType);
+            UpdateStateColorPreviews();
+            UpdateStateImagePreview(button.StateActiveImagePath);
         }        private void ActionTypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             var selectedItem = ActionTypeCombo.SelectedItem as ComboBoxItem;
@@ -62,9 +78,63 @@ namespace MiniDeck
                 
             AppLaunchPanel.Visibility = (actionType == ActionType.LaunchApplication) ? 
                 Visibility.Visible : Visibility.Collapsed;
+
+            UrlPanel.Visibility = (actionType == ActionType.OpenUrl) ?
+                Visibility.Visible : Visibility.Collapsed;
                 
             // パネルの表示状態が変わったら、ウィンドウサイズを調整
             AdjustWindowSize();
+        }
+
+        private void StateTypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (StateOptionsPanel == null || StateTypeHint == null)
+            {
+                return;
+            }
+
+            ButtonStateDisplayType stateType = GetSelectedStateDisplayType();
+            StateOptionsPanel.Visibility = stateType == ButtonStateDisplayType.None
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            switch (stateType)
+            {
+                case ButtonStateDisplayType.ApplicationRunning:
+                    StateTypeHint.Text = "アプリ・ファイルを開くアクションの対象パスを監視し、起動中を状態ONとして表示します。";
+                    break;
+                case ButtonStateDisplayType.MicrophoneMuted:
+                    StateTypeHint.Text = "Windowsの既定マイクがミュート中のとき、状態ONとして表示します。";
+                    break;
+                case ButtonStateDisplayType.SystemAudioMuted:
+                    StateTypeHint.Text = "Windowsの既定出力デバイスがミュート中のとき、状態ONとして表示します。";
+                    break;
+                default:
+                    StateTypeHint.Text = "状態表示を使用しません。従来どおり通常の表示名と画像を表示します。";
+                    break;
+            }
+
+            AdjustWindowSize();
+        }
+
+        private void SelectStateDisplayType(ButtonStateDisplayType stateType)
+        {
+            foreach (ComboBoxItem item in StateTypeCombo.Items)
+            {
+                if (item.Tag is ButtonStateDisplayType itemType && itemType == stateType)
+                {
+                    StateTypeCombo.SelectedItem = item;
+                    return;
+                }
+            }
+
+            StateTypeCombo.SelectedIndex = 0;
+        }
+
+        private ButtonStateDisplayType GetSelectedStateDisplayType()
+        {
+            return (StateTypeCombo.SelectedItem as ComboBoxItem)?.Tag is ButtonStateDisplayType stateType
+                ? stateType
+                : ButtonStateDisplayType.None;
         }
           private void AdjustWindowSize()
         {
@@ -85,8 +155,8 @@ namespace MiniDeck
         {
             var dialog = new OpenFileDialog
             {
-                Filter = "実行ファイル (*.exe)|*.exe|すべてのファイル (*.*)|*.*",
-                Title = "アプリケーションを選択"
+                Filter = "すべてのファイル (*.*)|*.*|実行ファイル (*.exe)|*.exe|ショートカット (*.lnk)|*.lnk",
+                Title = "開くアプリまたはファイルを選択"
             };
 
             if (dialog.ShowDialog() == true)
@@ -105,149 +175,189 @@ namespace MiniDeck
             {
                 try
                 {
-                    // 選択されたファイルのパス
-                    string selectedFilePath = dialog.FileName;
-                    // ファイル名を取得
-                    string fileName = System.IO.Path.GetFileName(selectedFilePath);
-                      // アプリケーションのリソースフォルダへのパス
-                    string resourceDir = System.IO.Path.Combine(
-                        System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
-                        "Resources", "Icons");
-                    
-                    // リソースディレクトリが存在しない場合は作成
-                    if (!System.IO.Directory.Exists(resourceDir))
-                    {
-                        System.IO.Directory.CreateDirectory(resourceDir);
-                    }
-                    
-                    // ファイルをコピー
-                    string destPath = System.IO.Path.Combine(resourceDir, fileName);
-                    System.IO.File.Copy(selectedFilePath, destPath, true);
-                    
-                    // 相対パスとしてセット
-                    ImagePathBox.Text = $"/Resources/Icons/{fileName}";
-                    
-                    MessageBox.Show("画像が正常に追加されました", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                    // ビルド出力ではなく、再ビルド後も残るユーザーデータ領域へ保存する
+                    ImagePathBox.Text = ImageStorageService.ImportImage(
+                        dialog.FileName,
+                        ImageStorageKind.Button);
                 }
                 catch (System.Exception ex)
                 {
                     MessageBox.Show($"画像の追加中にエラーが発生しました: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
-                    // エラー時は絶対パスをセット
-                    ImagePathBox.Text = dialog.FileName;
                 }
             }
-        }        private void OK_Click(object sender, RoutedEventArgs e)
+        }
+
+        private void BrowseStateActiveImage_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Filter = "画像ファイル (*.png;*.jpg;*.jpeg;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.gif;*.bmp|すべてのファイル (*.*)|*.*",
+                Title = "状態ONで表示する画像を選択"
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
+                {
+                    StateActiveImagePathBox.Text = ImageStorageService.ImportImage(
+                        dialog.FileName,
+                        ImageStorageKind.Button);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"画像の追加中にエラーが発生しました: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private void SelectStateActiveColor_Click(object sender, RoutedEventArgs e)
+        {
+            SelectStateColor(StateActiveColorBox, "#CC2E7D32");
+        }
+
+        private void SelectStateInactiveColor_Click(object sender, RoutedEventArgs e)
+        {
+            SelectStateColor(StateInactiveColorBox, "#403F3F46");
+        }
+
+        private void SelectStateColor(TextBox target, string fallbackColor)
+        {
+            Color initialColor = TryParseColor(target.Text, out Color parsedColor)
+                ? parsedColor
+                : (Color)ColorConverter.ConvertFromString(fallbackColor);
+            var dialog = new ColorPickerDialog(initialColor) { Owner = this };
+            if (dialog.ShowDialog() == true)
+            {
+                target.Text = dialog.SelectedColor.ToString();
+            }
+        }
+
+        private void StateColorBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateStateColorPreviews();
+        }
+
+        private void UpdateStateColorPreviews()
+        {
+            if (StateActiveColorPreview != null)
+            {
+                StateActiveColorPreview.Background = TryParseColor(StateActiveColorBox?.Text, out Color activeColor)
+                    ? new SolidColorBrush(activeColor)
+                    : Brushes.Transparent;
+            }
+
+            if (StateInactiveColorPreview != null)
+            {
+                StateInactiveColorPreview.Background = TryParseColor(StateInactiveColorBox?.Text, out Color inactiveColor)
+                    ? new SolidColorBrush(inactiveColor)
+                    : Brushes.Transparent;
+            }
+        }
+
+        private void StateActiveImagePathBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateStateImagePreview(StateActiveImagePathBox.Text);
+        }
+
+        private void UpdateStateImagePreview(string imagePath)
+        {
+            LoadImagePreview(StateActiveImagePreview, imagePath);
+        }
+
+        private static bool TryParseColor(string value, out Color color)
+        {
+            try
+            {
+                color = (Color)ColorConverter.ConvertFromString(value?.Trim());
+                return true;
+            }
+            catch
+            {
+                color = Colors.Transparent;
+                return false;
+            }
+        }
+
+        private void OK_Click(object sender, RoutedEventArgs e)
         {
             var selectedItem = ActionTypeCombo.SelectedItem as ComboBoxItem;
             if (selectedItem == null) return;
 
+            var selectedActionType = (ActionType)selectedItem.Tag;
+            ButtonStateDisplayType stateDisplayType = GetSelectedStateDisplayType();
+            if (stateDisplayType == ButtonStateDisplayType.ApplicationRunning &&
+                (selectedActionType != ActionType.LaunchApplication || string.IsNullOrWhiteSpace(ApplicationPathBox.Text)))
+            {
+                MessageBox.Show(
+                    "アプリの起動状態を表示するには、アクション種別を「アプリ・ファイルを開く」にして対象パスを指定してください。",
+                    "状態表示を設定できません",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            if (stateDisplayType == ButtonStateDisplayType.ApplicationRunning)
+            {
+                string extension = System.IO.Path.GetExtension(ApplicationPathBox.Text.Trim().Trim('"'));
+                if (!string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".lnk", StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(
+                        "アプリの起動状態は、.exeファイルまたは.exeへのショートカット（.lnk）で利用できます。",
+                        "監視対象を確認してください",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+            }
+
+            if (stateDisplayType != ButtonStateDisplayType.None &&
+                (!TryParseColor(StateActiveColorBox.Text, out Color _) ||
+                 !TryParseColor(StateInactiveColorBox.Text, out Color _)))
+            {
+                MessageBox.Show(
+                    "状態ONと状態OFFの色を #AARRGGBB または #RRGGBB 形式で指定してください。",
+                    "状態表示の色を確認してください",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            string url = UrlBox.Text?.Trim() ?? "";
+            if (selectedActionType == ActionType.OpenUrl)
+            {
+                if (!TryGetValidatedUrl(out Uri validatedUri))
+                {
+                    return;
+                }
+
+                url = validatedUri.AbsoluteUri;
+            }
+
             try
             {
-                Console.WriteLine($"ボタン設定の保存を開始します: {Button.DisplayText}");
-                  // ボタン情報を更新
+                // 呼び出し元から渡された編集用コピーだけを更新する。
+                // 永続化とメイン画面への反映は設定画面の「適用」「OK」が担当する。
                 Button.DisplayText = DisplayTextBox.Text ?? "";
                 Button.ImagePath = ImagePathBox.Text ?? "";
-                Button.ActionType = (ActionType)selectedItem.Tag;
+                Button.ActionType = selectedActionType;
                 Button.ShortcutKeySequence = ShortcutKeyBox.Text ?? "";
                 Button.ApplicationPath = ApplicationPathBox.Text ?? "";
                 Button.ApplicationArguments = ArgumentsBox.Text ?? "";
-
-                // 設定内容をログ出力
-                Console.WriteLine($"更新されたボタン設定:");
-                Console.WriteLine($"  表示テキスト: '{Button.DisplayText}'");
-                Console.WriteLine($"  画像パス: '{Button.ImagePath}'");
-                Console.WriteLine($"  アクションタイプ: {Button.ActionType}");
-                if (Button.ActionType == ActionType.LaunchApplication)
-                {
-                    Console.WriteLine($"  アプリケーションパス: '{Button.ApplicationPath}'");
-                    Console.WriteLine($"  アプリケーション引数: '{Button.ApplicationArguments}'");
-                }
-                else if (Button.ActionType == ActionType.KeyPress)
-                {
-                    Console.WriteLine($"  キーシーケンス: '{Button.ShortcutKeySequence}'");
-                }
-
-                // ボタンのプロパティ変更を明示的に通知
-                Button.OnPropertyChanged("DisplayText");
-                Button.OnPropertyChanged("ImagePath");
-                Button.OnPropertyChanged("ActionType");
-                Button.OnPropertyChanged("ShortcutKeySequence");
-                Button.OnPropertyChanged("ApplicationPath");
-                Button.OnPropertyChanged("ApplicationArguments");
-
-                // 親ウィンドウから設定を保存
-                bool settingsSaved = false;
-                MainViewModel targetViewModel = null;
-
-                // 設定ウィンドウから呼ばれた場合
-                var settingsWindow = Owner as SettingsWindow;
-                if (settingsWindow?.DataContext is MainViewModel settingsViewModel)
-                {
-                    targetViewModel = settingsViewModel;
-                    Console.WriteLine("SettingsWindow経由でViewModel取得");
-                }
-                else
-                {
-                    // メインウィンドウから直接呼ばれた場合
-                    var mainWindow = Owner as MainWindow;
-                    if (mainWindow?.DataContext is MainViewModel mainViewModel)
-                    {
-                        targetViewModel = mainViewModel;
-                        Console.WriteLine("MainWindow経由でViewModel取得");
-                    }
-                }
-
-                if (targetViewModel != null)
-                {
-                    Console.WriteLine("ViewModelが見つかりました。設定を保存します。");
-                    targetViewModel.SaveSettings();
-                    settingsSaved = true;
-                    
-                    // 保存確認
-                    string settingsPath = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "MiniDeck", "settings.xml");
-                    
-                    if (System.IO.File.Exists(settingsPath))
-                    {
-                        var fileInfo = new System.IO.FileInfo(settingsPath);
-                        Console.WriteLine($"設定ファイル保存確認: サイズ={fileInfo.Length}バイト, 更新時刻={fileInfo.LastWriteTime}");
-                    }
-                    else
-                    {
-                        Console.WriteLine("警告: 設定ファイルが見つかりません");
-                    }
-                }
-
-                if (!settingsSaved)
-                {
-                    Console.WriteLine("警告: ViewModelが見つからないため、直接保存を試みます");
-                    
-                    // 直接設定サービスを使用して保存
-                    var currentSettings = MiniDeck.Services.SettingsService.LoadSettings();
-                    if (currentSettings.Buttons == null)
-                    {
-                        currentSettings.Buttons = new List<MiniDeck.Models.ButtonSetting>();
-                    }
-
-                    // 現在のボタン設定を変換して追加
-                    var buttonSetting = MiniDeck.Models.ButtonSetting.FromActionButton(Button);
-                    Console.WriteLine($"ButtonSettingに変換: {buttonSetting.DisplayText}, {buttonSetting.ActionType}");
-                    
-                    // TODO: ここで正しいインデックスでボタンを更新する必要がある
-                    // 現在は単純に追加しているが、既存のボタンを更新する必要がある
-                    bool saved = MiniDeck.Services.SettingsService.SaveSettings(currentSettings);
-                    Console.WriteLine($"直接保存結果: {saved}");
-                }
-
-                Console.WriteLine("ボタン設定の保存処理が完了しました");
+                Button.Url = url;
+                Button.StateDisplayType = stateDisplayType;
+                Button.StateActiveDisplayText = StateActiveTextBox.Text ?? "";
+                Button.StateActiveImagePath = StateActiveImagePathBox.Text ?? "";
+                Button.StateActiveBackgroundColor = StateActiveColorBox.Text?.Trim() ?? "#CC2E7D32";
+                Button.StateInactiveBackgroundColor = StateInactiveColorBox.Text?.Trim() ?? "#403F3F46";
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"ボタン設定保存中にエラーが発生: {ex.Message}");
+                Console.WriteLine($"ボタン設定の更新中にエラーが発生: {ex.Message}");
                 Console.WriteLine($"スタックトレース: {ex.StackTrace}");
-                MessageBox.Show($"設定の保存中にエラーが発生しました: {ex.Message}", "エラー", 
+                MessageBox.Show($"設定の更新中にエラーが発生しました: {ex.Message}", "エラー",
                     MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
             }
 
             DialogResult = true;
@@ -284,48 +394,95 @@ namespace MiniDeck
         {
             UpdateImagePreview(ImagePathBox.Text);
         }
+
+        private void UrlBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (UrlValidationText == null)
+            {
+                return;
+            }
+
+            string value = UrlBox.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                SetUrlValidationMessage("※ http:// または https:// で始まるURLを入力してください", false);
+                return;
+            }
+
+            if (ActionService.TryCreateWebUri(value, out _, out string errorMessage))
+            {
+                SetUrlValidationMessage("入力されたURLを開くことができます。", false);
+            }
+            else
+            {
+                SetUrlValidationMessage(errorMessage, true);
+            }
+        }
+
+        private void TestUrl_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetValidatedUrl(out Uri uri))
+            {
+                return;
+            }
+
+            UrlBox.Text = uri.AbsoluteUri;
+            _actionService.OpenUrl(uri.AbsoluteUri);
+        }
+
+        private bool TryGetValidatedUrl(out Uri uri)
+        {
+            if (ActionService.TryCreateWebUri(UrlBox.Text, out uri, out string errorMessage))
+            {
+                SetUrlValidationMessage("入力されたURLを開くことができます。", false);
+                return true;
+            }
+
+            SetUrlValidationMessage(errorMessage, true);
+            UrlBox.Focus();
+            UrlBox.SelectAll();
+            return false;
+        }
+
+        private void SetUrlValidationMessage(string message, bool isError)
+        {
+            UrlValidationText.Text = message;
+            UrlValidationText.Foreground = isError ? Brushes.LightCoral : Brushes.White;
+        }
         
         // 画像プレビュー更新メソッド
         private void UpdateImagePreview(string imagePath)
+        {
+            LoadImagePreview(ImagePreview, imagePath);
+        }
+
+        private void LoadImagePreview(Image target, string imagePath)
         {
             try
             {
                 if (string.IsNullOrEmpty(imagePath))
                 {
-                    ImagePreview.Source = null;
+                    target.Source = null;
                     return;
                 }
 
-                string fullPath;
-                if (imagePath.StartsWith("/"))
-                {
-                    // アプリケーションリソースを処理
-                    string appPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    string baseDir = Path.GetDirectoryName(appPath);
-                    fullPath = baseDir + imagePath.Replace('/', '\\');
-                }
-                else
-                {
-                    fullPath = imagePath;
-                }
-
-                if (File.Exists(fullPath))
+                if (ImageStorageService.TryResolveImagePath(imagePath, out string fullPath))
                 {
                     BitmapImage bitmap = new BitmapImage();
                     bitmap.BeginInit();
                     bitmap.CacheOption = BitmapCacheOption.OnLoad;
                     bitmap.UriSource = new Uri(fullPath);
                     bitmap.EndInit();
-                    ImagePreview.Source = bitmap;
+                    target.Source = bitmap;
                 }
                 else
                 {
-                    ImagePreview.Source = null;
+                    target.Source = null;
                 }
             }
             catch
             {
-                ImagePreview.Source = null;
+                target.Source = null;
             }
         }
 

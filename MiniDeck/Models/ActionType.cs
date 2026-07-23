@@ -4,6 +4,7 @@ namespace MiniDeck.Models
     {
         None,
         KeyPress,
-        LaunchApplication
+        LaunchApplication,
+        OpenUrl
     }
 }

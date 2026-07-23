@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Threading.Tasks;
 using WindowsInput;
 using WindowsInput.Events;
+using System.IO;
 
 namespace MiniDeck.Services
 {
@@ -224,7 +225,24 @@ namespace MiniDeck.Services
 
             try
             {
-                ProcessStartInfo startInfo = new ProcessStartInfo(path);
+                string trimmedPath = path.Trim();
+                bool isFileSystemPath = Path.IsPathRooted(trimmedPath) ||
+                                        trimmedPath.IndexOf(Path.DirectorySeparatorChar) >= 0 ||
+                                        trimmedPath.IndexOf(Path.AltDirectorySeparatorChar) >= 0;
+                if (isFileSystemPath && !File.Exists(trimmedPath) && !Directory.Exists(trimmedPath))
+                {
+                    MessageBox.Show(
+                        $"登録されたファイルまたはフォルダーが見つかりません。\n{trimmedPath}",
+                        "起動エラー",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                ProcessStartInfo startInfo = new ProcessStartInfo(trimmedPath)
+                {
+                    UseShellExecute = true
+                };
                 if (!string.IsNullOrWhiteSpace(arguments))
                 {
                     startInfo.Arguments = arguments;
@@ -241,6 +259,73 @@ namespace MiniDeck.Services
                 MessageBox.Show($"予期しないエラー: {ex.Message}", 
                     "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        public static bool TryCreateWebUri(string value, out Uri uri, out string errorMessage)
+        {
+            uri = null;
+            errorMessage = null;
+
+            string trimmedValue = value?.Trim();
+            if (string.IsNullOrWhiteSpace(trimmedValue))
+            {
+                errorMessage = "URLを入力してください。";
+                return false;
+            }
+
+            if (!Uri.TryCreate(trimmedValue, UriKind.Absolute, out Uri parsedUri))
+            {
+                errorMessage = "完全なURLを入力してください（例: https://example.com）。";
+                return false;
+            }
+
+            bool isHttp = string.Equals(parsedUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+            bool isHttps = string.Equals(parsedUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+            if (!isHttp && !isHttps)
+            {
+                errorMessage = "http:// または https:// で始まるURLだけを使用できます。";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(parsedUri.Host))
+            {
+                errorMessage = "URLのホスト名が見つかりません。";
+                return false;
+            }
+
+            uri = parsedUri;
+            return true;
+        }
+
+        public bool OpenUrl(string value)
+        {
+            if (!TryCreateWebUri(value, out Uri uri, out string errorMessage))
+            {
+                MessageBox.Show(errorMessage, "URLエラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = uri.AbsoluteUri,
+                    UseShellExecute = true
+                });
+                return true;
+            }
+            catch (Win32Exception ex)
+            {
+                MessageBox.Show($"URLを開けませんでした: {uri.AbsoluteUri}\n{ex.Message}",
+                    "URL起動エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"URLを開くときにエラーが発生しました: {ex.Message}",
+                    "URL起動エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+
+            return false;
         }
     }
 }

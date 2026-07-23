@@ -1,0 +1,79 @@
+<Window x:Class="MiniDeck.ImageManagementWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:MiniDeck"
+        Title="画像とアイコンの管理"
+        Width="920" Height="600" MinWidth="720" MinHeight="440"
+        WindowStartupLocation="CenterOwner"
+        Background="#FF333333" Foreground="White">
+    <Window.Resources>
+        <local:ImagePathConverter x:Key="ImagePathConverter"/>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Background" Value="#FF555555"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#80FFFFFF"/>
+        </Style>
+        <Style TargetType="DataGridCell">
+            <Setter Property="Foreground" Value="#FF222222"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Foreground" Value="#FF222222"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" TextWrapping="Wrap" Margin="0,0,0,8"
+                   Text="ボタン画像、背景画像、Windowsから取得したアイコンを確認できます。使用中の画像は削除できません。見つからない画像を選択すると、参照先を確認して画像を選び直せます。"/>
+        <TextBlock x:Name="SummaryText" Grid.Row="1" Margin="0,0,0,8" FontWeight="Bold"/>
+
+        <DataGrid x:Name="ImageGrid" Grid.Row="2"
+                  AutoGenerateColumns="False" IsReadOnly="True"
+                  SelectionMode="Single" SelectionUnit="FullRow"
+                  CanUserAddRows="False" CanUserDeleteRows="False"
+                  MouseDoubleClick="ImageGrid_MouseDoubleClick">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="画像" Width="58">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Width="42" Height="42" Background="#FFE8E8E8" Margin="3">
+                                <Image Source="{Binding PreviewPath, Converter={StaticResource ImagePathConverter}}" Stretch="Uniform"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="105"/>
+                <DataGridTextColumn Header="種類" Binding="{Binding KindLabel}" Width="110"/>
+                <DataGridTextColumn Header="ファイル" Binding="{Binding FileName}" Width="170"/>
+                <DataGridTextColumn Header="使用場所" Binding="{Binding ReferenceSummary}" Width="*"/>
+                <DataGridTextColumn Header="保存パス" Binding="{Binding StoredPath}" Width="260"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <WrapPanel Grid.Row="3" Margin="0,10,0,8">
+            <Button Content="再読み込み" Width="100" Margin="0,0,8,0" Click="Refresh_Click"/>
+            <Button Content="画像を選択し直す..." Width="160" Margin="0,0,8,0" Click="Repair_Click"/>
+            <Button Content="選択した未使用画像を削除" Width="190" Margin="0,0,8,0" Click="DeleteSelected_Click"/>
+            <Button Content="未使用画像をすべて削除" Width="180" Click="DeleteAllUnused_Click"/>
+        </WrapPanel>
+
+        <Grid Grid.Row="4">
+            <TextBlock Text="※ 未使用画像の削除は直ちに実行されます。再選択はこの画面のOKで設定画面の下書きへ反映されます。"
+                       VerticalAlignment="Center" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,190,0"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Click="OK_Click"/>
+                <Button Content="キャンセル" Width="90" IsCancel="True" Click="Cancel_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

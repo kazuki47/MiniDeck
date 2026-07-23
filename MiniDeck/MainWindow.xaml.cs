@@ -4,6 +4,7 @@ using System.Windows.Data;  // IValueConverterのため
 using System;               // NotImplementedExceptionのため
 using System.Globalization; // CultureInfoのため
 using MiniDeck.ViewModels;
+using MiniDeck.Services;
 using System.Windows.Media.Imaging; // BitmapImageのため
 using System.Windows.Media;  // SolidColorBrush, ImageBrushのため
 using System.Windows.Markup; // XamlReaderのため
@@ -12,6 +13,7 @@ using System.IO; // StringReaderのため
 using System.Collections.Generic; // IEnumerable<T>のため
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
+using System.Windows.Threading;
 
 
 namespace MiniDeck
@@ -24,60 +26,38 @@ namespace MiniDeck
 
         private MainViewModel _viewModel;
         private HwndSource _windowSource;
+        private readonly ButtonStateMonitorService _buttonStateMonitor = new ButtonStateMonitorService();
+        private DispatcherTimer _buttonStateTimer;
 
         public MainWindow()
+            : this(new MainViewModel(), true)
+        {
+        }
+
+        internal MainWindow(MainViewModel viewModel)
+            : this(viewModel, false)
+        {
+        }
+
+        private MainWindow(MainViewModel viewModel, bool showInitializationError)
         {
             try
             {
-                // デバッグ用：設定ファイルが存在するか確認
-                string settingsPath = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "MiniDeck", "settings.xml");
-                Console.WriteLine($"設定ファイルのパス: {settingsPath}");
-                bool fileExists = System.IO.File.Exists(settingsPath);
-                Console.WriteLine($"設定ファイルの存在: {fileExists}");
-                
-                if (fileExists)
-                {
-                    try
-                    {
-                        string content = System.IO.File.ReadAllText(settingsPath);
-                        Console.WriteLine("=== 設定ファイルの内容 ===");
-                        Console.WriteLine(content.Substring(0, Math.Min(content.Length, 500)) + "...");
-                        Console.WriteLine("=========================");
-                    }
-                    catch (Exception readEx)
-                    {
-                        Console.WriteLine($"設定ファイルの読み込みエラー: {readEx.Message}");
-                    }
-                }
-                  // XAMLコンポーネントを初期化
-                try {
-                    InitializeComponent();
-                }
-                catch (Exception initEx) {
-                    Console.WriteLine($"InitializeComponentエラー: {initEx.Message}");
-                }
-                
+                InitializeComponent();
+
                 // 手動でウィンドウを初期化
                 InitializeWindow();
-                  // デバッグ用：設定ファイルが存在するか確認
-                ShowSettingsFileInfo();
-                
-                // XAMLで作成されたMainViewModelを取得
-                _viewModel = DataContext as MainViewModel;
-                
-                // DataContextが設定されていない場合は手動で作成
-                if (_viewModel == null)
-                {
-                    Console.WriteLine("警告: DataContextが設定されていないため、MainViewModelを新規作成します");
-                    _viewModel = new MainViewModel();
-                    DataContext = _viewModel;
-                }
-                else
-                {
-                    Console.WriteLine("XAML経由でMainViewModelが正しく設定されています");
-                }
+
+                _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+                DataContext = _viewModel;
+                _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+                Loaded += MainWindow_Loaded;
+
+                // ウィンドウ表示前から保存された最前面設定を使用する
+                Topmost = _viewModel.AlwaysOnTop;
+
+                // 初回描画より前に保存済みの背景を反映し、既定色のちらつきを防ぐ
+                UpdateBackgroundOpacity();
                 
                 // リソースディレクトリが存在するか確認
                 CheckResourceDirectory();
@@ -101,13 +81,19 @@ namespace MiniDeck
                     }
                 }
                 
-                // 設定保存・読み込みテストを実行
-                TestSettingsSaveLoad();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"メインウィンドウの初期化中にエラーが発生しました: {ex.Message}\n{ex.StackTrace}",
-                    "初期化エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                if (!showInitializationError)
+                {
+                    throw new InvalidOperationException("メインウィンドウの初期化に失敗しました。", ex);
+                }
+
+                MessageBox.Show(
+                    $"メインウィンドウの初期化中にエラーが発生しました: {ex.Message}\n{ex.StackTrace}",
+                    "初期化エラー",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
 
@@ -137,6 +123,13 @@ namespace MiniDeck
 
         protected override void OnClosed(EventArgs e)
         {
+            if (_buttonStateTimer != null)
+            {
+                _buttonStateTimer.Stop();
+                _buttonStateTimer.Tick -= ButtonStateTimer_Tick;
+                _buttonStateTimer = null;
+            }
+
             if (_windowSource != null)
             {
                 _windowSource.RemoveHook(MainWindowHook);
@@ -144,6 +137,35 @@ namespace MiniDeck
             }
 
             base.OnClosed(e);
+        }
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            Loaded -= MainWindow_Loaded;
+            RefreshButtonStates();
+            _buttonStateTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _buttonStateTimer.Tick += ButtonStateTimer_Tick;
+            _buttonStateTimer.Start();
+        }
+
+        private void ButtonStateTimer_Tick(object sender, EventArgs e)
+        {
+            RefreshButtonStates();
+        }
+
+        private void RefreshButtonStates()
+        {
+            try
+            {
+                _buttonStateMonitor.Refresh(_viewModel?.Buttons);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ボタン状態の更新に失敗しました: {ex.Message}");
+            }
         }
 
         private IntPtr MainWindowHook(
@@ -203,18 +225,31 @@ namespace MiniDeck
         {
             // ボタンのサイズと余白を考慮してウィンドウサイズを計算
             const int BUTTON_WIDTH = 80;
-            const int BUTTON_HEIGHT = 65;
+            const int BUTTON_HEIGHT = 80;
             const int BUTTON_HORIZONTAL_MARGIN = 8;
             const int BUTTON_VERTICAL_MARGIN = 4;
             const int HEADER_HEIGHT = 30;    // タイトルバー
-            const int FOOTER_HEIGHT = 20;    // ステータスバー
             const int WINDOW_PADDING = 10;   // ウィンドウ内部の余白
-            
-            int totalWidth = (_viewModel.ButtonColumns * (BUTTON_WIDTH + BUTTON_HORIZONTAL_MARGIN)) + (WINDOW_PADDING * 2);
-            int totalHeight = (_viewModel.ButtonRows * (BUTTON_HEIGHT + BUTTON_VERTICAL_MARGIN)) + HEADER_HEIGHT + FOOTER_HEIGHT + (WINDOW_PADDING * 2);
-            
+
+            int pageNavigationWidth = _viewModel.HasMultiplePages
+                ? 2 * (BUTTON_WIDTH + BUTTON_HORIZONTAL_MARGIN)
+                : 0;
+
+            int totalWidth = (_viewModel.ButtonColumns * (BUTTON_WIDTH + BUTTON_HORIZONTAL_MARGIN)) +
+                             pageNavigationWidth +
+                             (WINDOW_PADDING * 2);
+            int totalHeight = (_viewModel.ButtonRows * (BUTTON_HEIGHT + BUTTON_VERTICAL_MARGIN)) + HEADER_HEIGHT + (WINDOW_PADDING * 2);
+
             Width = totalWidth;
             Height = totalHeight;
+        }
+
+        private void ViewModel_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(MainViewModel.PageCount) && IsLoaded)
+            {
+                ApplyLayoutFromSettings();
+            }
         }
 
         internal void ApplyLayoutFromSettings()
@@ -228,6 +263,13 @@ namespace MiniDeck
             double currentBottom = Top + ActualHeight;
             AdjustWindowSize();
             Top = currentBottom - Height;
+        }
+
+        internal void ApplyWindowSettingsFromViewModel()
+        {
+            ApplyLayoutFromSettings();
+            Topmost = _viewModel.AlwaysOnTop;
+            UpdateBackgroundOpacity();
         }
         
         private void PositionWindowAtBottomLeft()
@@ -257,7 +299,6 @@ namespace MiniDeck
             this.AllowsTransparency = true;
             this.WindowStyle = WindowStyle.None;
             this.ShowActivated = false;
-            this.Topmost = true;
             this.WindowStartupLocation = WindowStartupLocation.Manual;
             this.BorderThickness = new Thickness(1);
             this.BorderBrush = Brushes.Black;
@@ -332,6 +373,9 @@ namespace MiniDeck
             }
         }        private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            // 保存された一般設定を起動時に反映
+            Topmost = _viewModel.AlwaysOnTop;
+
             // 初期ロード時に背景透明度を適用
             UpdateBackgroundOpacity();
 
@@ -346,7 +390,7 @@ namespace MiniDeck
             if (panel != null)
             {
                 // パネル自体がマウスイベントをキャプチャするようにする
-                panel.Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)); // ほぼ透明だがイベントはキャプチャ
+                panel.Background = Brushes.Transparent;
             }
             
             // ボタンイベントの手動接続
@@ -403,58 +447,49 @@ namespace MiniDeck
             
             try
             {
+                bool backgroundImageApplied = false;
+
                 // 背景画像の処理
                 if (_viewModel.UseBackgroundImage && !string.IsNullOrEmpty(_viewModel.BackgroundImagePath))
                 {
-                    // 背景画像を使用する場合 - 鮮やかさを保持
-                    try {
-                        string fullPath;
-                        if (_viewModel.BackgroundImagePath.StartsWith("/"))
+                    try
+                    {
+                        if (ImageStorageService.TryResolveImagePath(
+                            _viewModel.BackgroundImagePath,
+                            out string fullPath))
                         {
-                            // アプリケーションリソースを処理
-                            string appPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                            string baseDir = System.IO.Path.GetDirectoryName(appPath);
-                            fullPath = baseDir + _viewModel.BackgroundImagePath.Replace('/', '\\');
-                        }
-                        else
-                        {
-                            fullPath = _viewModel.BackgroundImagePath;
-                        }
-                        
-                        if (System.IO.File.Exists(fullPath))
-                        {
-                            // 透明ブラシをレイヤーとして追加して、マウスイベントを確実にキャプチャ
-                            // 不透明度は最小限に設定（0.01）して画面表示に影響しないようにする
-                            SolidColorBrush hitTestBrush = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
-                            
-                            // 背景画像用のブラシを設定
+                            BitmapImage bitmap = new BitmapImage();
+                            bitmap.BeginInit();
+                            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                            bitmap.UriSource = new Uri(fullPath, UriKind.Absolute);
+                            bitmap.EndInit();
+                            bitmap.Freeze();
+
                             ImageBrush imageBrush = new ImageBrush
                             {
-                                ImageSource = new BitmapImage(new Uri(fullPath)),
+                                ImageSource = bitmap,
                                 Stretch = Stretch.UniformToFill,
-                                Opacity = _viewModel.BackgroundOpacity // 透明度を設定
+                                Opacity = ClampOpacity(_viewModel.BackgroundOpacity)
                             };
-                            
-                            // グラデーションブラシを使って複数のレイヤーを表現
-                            var brushes = new GradientStopCollection();
-                            brushes.Add(new GradientStop(hitTestBrush.Color, 0.0)); // ヒットテスト用の透明なレイヤ
-                            
-                            // ブラシを適用
-                            this.Background = imageBrush;
-                            Console.WriteLine($"マウスイベントをキャプチャする背景画像を適用しました。");
+
+                            Background = imageBrush;
+                            backgroundImageApplied = true;
+                            Console.WriteLine($"背景画像を適用しました: {fullPath}");
                         }
                     }
-                    catch (Exception ex) {
+                    catch (Exception ex)
+                    {
                         Console.WriteLine($"背景画像の適用中にエラー: {ex.Message}");
                     }
                 }
-                else
+
+                // 色背景の設定時、または背景画像を読み込めない場合は保存色を使用する
+                if (!backgroundImageApplied)
                 {
-                    // 背景画像を使用しない場合は半透明ブラシを設定（マウスイベントは確実にキャプチャ）
-                    // Color.FromArgb(1, 0, 0, 0) はほぼ完全な透明色だが、マウスイベントはキャプチャする
-                    SolidColorBrush transparentBrush = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
-                    this.Background = transparentBrush;
-                    Console.WriteLine("マウスイベントをキャプチャする透明背景を適用しました。");
+                    Background = CreateBackgroundColorBrush(
+                        _viewModel.BackgroundColor,
+                        _viewModel.BackgroundOpacity);
+                    Console.WriteLine($"背景色を適用しました: {_viewModel.BackgroundColor}");
                 }
             }
             catch (Exception ex)
@@ -495,6 +530,34 @@ namespace MiniDeck
                     }
                 }
             }
+        }
+
+        internal static SolidColorBrush CreateBackgroundColorBrush(string colorValue, double opacity)
+        {
+            Color color;
+            try
+            {
+                color = (Color)ColorConverter.ConvertFromString(colorValue ?? "#FFFFFFFF");
+            }
+            catch (FormatException)
+            {
+                color = Colors.White;
+            }
+
+            return new SolidColorBrush(color)
+            {
+                Opacity = ClampOpacity(opacity)
+            };
+        }
+
+        private static double ClampOpacity(double opacity)
+        {
+            if (double.IsNaN(opacity))
+            {
+                return 1.0;
+            }
+
+            return Math.Max(0.0, Math.Min(1.0, opacity));
         }
         
         // リソースディレクトリの存在を確認するメソッド
@@ -736,12 +799,12 @@ namespace MiniDeck
                 catch
                 {
                     // エラーの場合はデフォルト色を返す
-                    return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF404040"));
+                    return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFFFFFFF"));
                 }
             }
             
             // null や空文字の場合はデフォルト色を返す
-            return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF404040"));
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFFFFFFF"));
         }
         
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
@@ -750,7 +813,7 @@ namespace MiniDeck
             {
                 return brush.Color.ToString();
             }
-            return "#FF000000";
+            return "#FFFFFFFF";
         }
     }
 
@@ -777,109 +840,27 @@ namespace MiniDeck
                 return null;
                 
             string path = value as string;
-            
+
             try
             {
                 Console.WriteLine($"画像パス変換を試行: {path}");
-                
-                // URIとして解析可能か確認
-                if (path.StartsWith("/"))
+                if (!ImageStorageService.TryResolveImagePath(path, out string filePath))
                 {
-                    // アプリケーションリソースを処理
-                    string appPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    string baseDir = System.IO.Path.GetDirectoryName(appPath);
-                    string filePath = baseDir + path.Replace('/', '\\');
-                    
-                    Console.WriteLine($"相対パスを変換: {path} -> {filePath}");
-                    
-                    if (System.IO.File.Exists(filePath))
-                    {
-                        try
-                        {
-                            // BitmapImageを使用して、正確に画像をロード
-                            BitmapImage bitmap = new BitmapImage();
-                            bitmap.BeginInit();
-                            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                            bitmap.UriSource = new Uri(filePath);
-                            bitmap.EndInit();
-                            return bitmap;
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"画像読み込みエラー: {ex.Message}");
-                            return null;
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"画像が見つかりません: {filePath}");
-                        return null;
-                    }
+                    Console.WriteLine($"画像が見つかりません: {path}");
+                    return null;
                 }
-                else if (System.IO.File.Exists(path))
-                {
-                    // 絶対パスとして処理
-                    try
-                    {
-                        // BitmapImageを使用して、正確に画像をロード
-                        BitmapImage bitmap = new BitmapImage();
-                        bitmap.BeginInit();
-                        bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmap.UriSource = new Uri(path);
-                        bitmap.EndInit();
-                        return bitmap;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"絶対パス画像読み込みエラー: {ex.Message}");
-                        return null;
-                    }
-                }
-                else if (Uri.IsWellFormedUriString(path, UriKind.Absolute))
-                {
-                    // 絶対URIをそのまま使用
-                    try
-                    {
-                        // BitmapImageを使用して、正確に画像をロード
-                        BitmapImage bitmap = new BitmapImage();
-                        bitmap.BeginInit();
-                        bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmap.UriSource = new Uri(path);
-                        bitmap.EndInit();
-                        return bitmap;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"絶対URI画像読み込みエラー: {ex.Message}");
-                        return null;
-                    }
-                }
-                
-                // デフォルト値として処理
-                return null;
+
+                BitmapImage bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.UriSource = new Uri(filePath);
+                bitmap.EndInit();
+                return bitmap;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"画像パス変換エラー: {ex.Message}");
                 Console.WriteLine($"スタックトレース: {ex.StackTrace}");
-                
-                // エラー発生時でも最低限の表示を試みる
-                try {
-                    // エラーが発生したが、最後の手段として基本的なBitmapImageを作成
-                    if (path.StartsWith("/"))
-                    {
-                        string appPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                        string baseDir = System.IO.Path.GetDirectoryName(appPath);
-                        // デフォルトアイコンを返す
-                        string defaultIconPath = baseDir + "\\Resources\\Icons\\default_icon.jpg";
-                        if (System.IO.File.Exists(defaultIconPath)) {
-                            BitmapImage bitmap = new BitmapImage(new Uri(defaultIconPath));
-                            return bitmap;
-                        }
-                    }
-                } catch {
-                    // 最後の手段も失敗
-                }
                 return null;
             }
         }

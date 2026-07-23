@@ -3,74 +3,76 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:MiniDeck"
-        xmlns:vm="clr-namespace:MiniDeck.ViewModels"        xmlns:models="clr-namespace:MiniDeck.Models"        mc:Ignorable="d"        Title="MiniDeck" Height="250" Width="400"
+        xmlns:controls="clr-namespace:MiniDeck.Controls"
+        mc:Ignorable="d" Title="MiniDeck" Height="250" Width="400"
         AllowsTransparency="True" WindowStyle="None" ShowActivated="False"
-        Topmost="True"        WindowStartupLocation="Manual"
+        WindowStartupLocation="Manual"
         BorderThickness="1" BorderBrush="Black"
         Icon="/image/MiniDeckIcon.ico">
-      <Window.Background>
-        <!-- 透明で1%の不透明度を持つブラシを使用（マウスイベントをキャッチするため） -->
-        <SolidColorBrush Color="#01000000"/>
+    <Window.Background>
+        <!-- 保存設定の読み込み前に使用する初期背景 -->
+        <SolidColorBrush Color="#FFFFFFFF"/>
     </Window.Background>
 
-    <!-- マウスイベントを追加 -->
-    <Window.InputBindings>
-        <MouseBinding MouseAction="LeftClick" Command="{Binding PlaceholderCommand}" />
-    </Window.InputBindings>	<Window.DataContext>
-		<vm:MainViewModel/>
-	</Window.DataContext><Window.Resources>
-        <local:StringToVisibilityConverter x:Key="StringToVisibilityConverter"/>
-        <local:ImagePathConverter x:Key="ImagePathConverter"/>        <!-- ボタンのスタイル -->
-        <Style TargetType="Button" x:Key="DeckButtonStyle">
-            <Setter Property="Foreground" Value="Black"/>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+
+        <Style x:Key="DeckPageNavigationButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="80"/>
-            <Setter Property="Height" Value="65"/>
+            <Setter Property="Height" Value="80"/>
             <Setter Property="Margin" Value="4,2"/>
+            <Setter Property="Foreground" Value="Black"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Black"/>
+            <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="KeyboardNavigation.IsTabStop" Value="False"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="ButtonBorder" 
+                        <Border x:Name="PageButtonBorder"
                                 Background="Transparent"
-                                BorderBrush="Black" 
+                                BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="10"
-                                Opacity="{Binding DataContext.ButtonOpacity, RelativeSource={RelativeSource AncestorType=Window}}">
-                            <Grid>
-                                <Image Source="{Binding ImagePath, Converter={StaticResource ImagePathConverter}}" 
-                                       Visibility="{Binding ImagePath, Converter={StaticResource StringToVisibilityConverter}}"
-                                       Margin="5" Stretch="Uniform" 
-                                       RenderOptions.BitmapScalingMode="HighQuality"/>
-                                <TextBlock Text="{Binding DisplayText}" 
-                                           HorizontalAlignment="Center" 
-                                           VerticalAlignment="Bottom"
-                                           Margin="0,0,0,5"
-                                           TextWrapping="Wrap"
-                                           TextAlignment="Center"/>
-                            </Grid>
-                        </Border>                        <ControlTemplate.Triggers>
+                                Opacity="{Binding ButtonOpacity}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#606060"/>
-                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="2"/>
+                                <Setter TargetName="PageButtonBorder" Property="BorderBrush" Value="#FF80B8E8"/>
+                                <Setter TargetName="PageButtonBorder" Property="BorderThickness" Value="2"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#909090"/>
-                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="2"/>
+                                <Setter TargetName="PageButtonBorder" Property="BorderBrush" Value="#FFB0D8F8"/>
+                                <Setter TargetName="PageButtonBorder" Property="BorderThickness" Value="2"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="PageButtonBorder" Property="Opacity" Value="0.3"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-        </Style>    </Window.Resources>    <Grid IsHitTestVisible="True">
+        </Style>
+    </Window.Resources>
+
+    <!-- マウスイベントを追加 -->
+    <Window.InputBindings>
+        <MouseBinding MouseAction="LeftClick" Command="{Binding PlaceholderCommand}" />
+    </Window.InputBindings>
+    <Grid IsHitTestVisible="True">
         <Grid.Background>
-            <!-- ほぼ透明だが、マウスイベントをキャプチャするための微小な不透明度 -->
-            <SolidColorBrush Color="#01000000"/>
+            <!-- 非nullの透明ブラシにより透明部分でもマウスイベントを受け取る -->
+            <SolidColorBrush Color="Transparent"/>
         </Grid.Background>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>          <!-- タイトルバー -->        <Border Grid.Row="0" Background="Transparent" Name="TitleBorder">
             <Grid>                <TextBlock Text="MiniDeck" Foreground="Black" Margin="10,5" FontWeight="Bold"/>                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">                    <Button Content="設定" Width="50" Margin="0,0,5,0" Name="SettingsButton"
                            Foreground="Black" BorderThickness="1"
@@ -97,7 +99,7 @@
                             </ControlTemplate>
                         </Button.Template>
                     </Button>                    <Button Content="X" Width="20" Margin="0,0,5,0" Name="CloseButton"
-                           Foreground="White" BorderThickness="1"
+                           Foreground="Black" BorderThickness="1"
                            Opacity="{Binding DataContext.ButtonOpacity, RelativeSource={RelativeSource AncestorType=Window}}">
                         <Button.Background>
                             <SolidColorBrush Color="Transparent"/>
@@ -125,22 +127,63 @@
             </Grid>
         </Border>
         
-        <!-- ボタングリッド -->
-        <ItemsControl Grid.Row="1" ItemsSource="{Binding Buttons}">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <UniformGrid Rows="{Binding ButtonRows}" Columns="{Binding ButtonColumns}"/>
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="{x:Type models:ActionButton}">
-                    <Button Style="{StaticResource DeckButtonStyle}" 
-                            Command="{Binding ClickCommand}"/>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>        <!-- ステータスバー -->
-        <Border Grid.Row="2" Background="Transparent">
-            <TextBlock Text="{Binding StatusText}" Foreground="White" Margin="5,2" HorizontalAlignment="Right"/>
-        </Border>
+        <!-- ページが複数ある場合、ボタングリッド上段の左右に移動ボタンを表示 -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <UniformGrid Grid.Column="0"
+                         Rows="{Binding ButtonRows}"
+                         Columns="1"
+                         Visibility="{Binding HasMultiplePages, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Button x:Name="PreviousPageButton"
+                        Command="{Binding PreviousPageCommand}"
+                        IsEnabled="{Binding CanMoveToPreviousPage}"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource DeckPageNavigationButtonStyle}"
+                        ToolTip="前のページ">
+                    <Grid>
+                        <TextBlock Text="◀" FontSize="28"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,10"/>
+                        <TextBlock Text="前のページ" FontSize="10"
+                                   HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="4,0,4,6"/>
+                    </Grid>
+                </Button>
+            </UniformGrid>
+
+            <!-- メイン画面と設定画面で共通の正方形ボタングリッドを使用 -->
+            <controls:ButtonGridControl Grid.Column="1"
+                                        x:Name="MainButtonGrid"
+                                        ItemsSource="{Binding Buttons}"
+                                        Rows="{Binding ButtonRows}"
+                                        Columns="{Binding ButtonColumns}"
+                                        ButtonSize="80"
+                                        ButtonOpacity="{Binding ButtonOpacity}"
+                                        ButtonForeground="Black"
+                                        ButtonBorderBrush="Black"/>
+
+            <UniformGrid Grid.Column="2"
+                         Rows="{Binding ButtonRows}"
+                         Columns="1"
+                         Visibility="{Binding HasMultiplePages, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Button x:Name="NextPageButton"
+                        Command="{Binding NextPageCommand}"
+                        IsEnabled="{Binding CanMoveToNextPage}"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource DeckPageNavigationButtonStyle}"
+                        ToolTip="次のページ">
+                    <Grid>
+                        <TextBlock Text="▶" FontSize="28"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,0,0,10"/>
+                        <TextBlock Text="次のページ" FontSize="10"
+                                   HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="4,0,4,6"/>
+                    </Grid>
+                </Button>
+            </UniformGrid>
+        </Grid>
+
     </Grid>
 </Window>

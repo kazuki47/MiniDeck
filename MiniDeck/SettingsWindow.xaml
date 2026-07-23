@@ -4,8 +4,9 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:MiniDeck"
+        xmlns:controls="clr-namespace:MiniDeck.Controls"
         mc:Ignorable="d"
-        Title="MiniDeck Settings" Height="380" Width="450"
+        Title="MiniDeck Settings" Height="620" Width="760"
         WindowStartupLocation="CenterOwner"
         Background="#E5333333" Foreground="White">
       <Window.Resources>
@@ -113,69 +114,98 @@
                         <TextBlock Text="{Binding}" FontSize="12"/>
                     </DataTemplate>
                 </TabItem.HeaderTemplate>
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <Grid Margin="10">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="250"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        
-                        <TextBlock Grid.Row="0" 
-                                   Text="※設定したいボタンを選択して「編集」をクリック"
+
+                        <Grid Grid.Row="0" Margin="0,5,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="180"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" Text="ページ:" Margin="0,0,8,0"/>
+                            <ComboBox x:Name="PageSelector"
+                                      Grid.Column="1"
+                                      ItemsSource="{Binding DraftPages, RelativeSource={RelativeSource AncestorType=Window}}"
+                                      DisplayMemberPath="Name"
+                                      SelectionChanged="PageSelector_SelectionChanged"/>
+                            <TextBlock x:Name="DraftPagePositionText" Grid.Column="2" Margin="10,0,0,0" Opacity="0.75"/>
+                            <Button Grid.Column="4" Content="追加" Width="68" Margin="12,0,8,0" Click="AddPage_Click"/>
+                            <Button Grid.Column="5" Content="複製" Width="68" Margin="0,0,8,0" Click="DuplicatePage_Click"/>
+                            <Button Grid.Column="6" Content="削除" Width="68" Click="DeletePage_Click"/>
+                        </Grid>
+
+                        <Grid Grid.Row="1" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="ページ名:" Margin="0,0,8,0"/>
+                            <TextBox x:Name="PageNameTextBox" Grid.Column="1" MinWidth="180" Height="26"/>
+                            <Button Grid.Column="2" Content="名前変更" Width="84" Margin="8,0,0,0" Click="RenamePage_Click"/>
+                        </Grid>
+
+                        <DockPanel Grid.Row="2" Margin="0,0,0,8">
+                            <TextBlock Text="ページ操作:" Margin="0,0,8,0"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="ページを並べ替え..." Width="140" Margin="0,0,16,0" Click="ReorderPages_Click"
+                                        ToolTip="ページを縦一覧で表示し、ドラッグ＆ドロップで並べ替えます"/>
+                                <Button Content="コピー" Width="68" Margin="0,0,8,0" Click="CopyPage_Click"/>
+                                <Button Content="貼り付け" Width="68" Click="PastePage_Click"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <TextBlock Grid.Row="3"
+                                   Text="ボタン同士のドラッグで並べ替え。ファイル、フォルダー、ショートカット、URLをボタンへドロップすると登録できます。"
                                    Margin="0,5,0,10" TextWrapping="Wrap"/>
-                        
-                        <ListView Grid.Row="1" x:Name="ButtonListView" Background="#40303030" Foreground="White"
-                                  BorderThickness="1" BorderBrush="#80FFFFFF">
-                            <ListView.Resources>
-                                <!-- リストビュー項目のスタイル -->
-                                <Style TargetType="ListViewItem">
-                                    <Setter Property="Foreground" Value="White"/>
-                                    <Setter Property="Background" Value="Transparent"/>
-                                    <Style.Triggers>
-                                        <Trigger Property="IsSelected" Value="True">
-                                            <Setter Property="Background" Value="#6080A0C0"/>
-                                            <Setter Property="BorderBrush" Value="#80FFFFFF"/>
-                                        </Trigger>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="#40606060"/>
-                                        </Trigger>
-                                    </Style.Triggers>
-                                </Style>
-                                
-                                <!-- GridViewヘッダーのスタイル -->
-                                <Style TargetType="GridViewColumnHeader">
-                                    <Setter Property="Foreground" Value="White"/>
-                                    <Setter Property="Background" Value="#60505050"/>
-                                    <Setter Property="BorderBrush" Value="#80FFFFFF"/>
-                                    <Setter Property="BorderThickness" Value="0,0,1,1"/>
-                                    <Setter Property="Padding" Value="5,3"/>
-                                    <Style.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="#80606060"/>
-                                        </Trigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </ListView.Resources>
-                            <ListView.View>
-                                <GridView>
-                                    <GridViewColumn Header="ボタン名" DisplayMemberBinding="{Binding DisplayText}" Width="100"/>
-                                    <GridViewColumn Header="アクション種別" DisplayMemberBinding="{Binding ActionType}" Width="100"/>
-                                    <GridViewColumn Header="アクション内容" Width="150">
-                                        <GridViewColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock>
-                                                    <TextBlock.Text>
-                                                        <MultiBinding StringFormat="{}{0}{1}">
-                                                            <Binding Path="ShortcutKeySequence"/>
-                                                            <Binding Path="ApplicationPath"/>
-                                                        </MultiBinding>
-                                                    </TextBlock.Text>
-                                                </TextBlock>
-                                            </DataTemplate>
-                                        </GridViewColumn.CellTemplate>
-                                    </GridViewColumn>
-                                </GridView>                            </ListView.View>
-                        </ListView>
+
+                        <Border Grid.Row="4" Background="#40303030" BorderThickness="1"
+                                BorderBrush="#80FFFFFF" Padding="8" CornerRadius="4">
+                            <controls:ButtonGridControl x:Name="ButtonGrid"
+                                                        ItemsSource="{Binding DraftButtons, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        Rows="{Binding DataContext.ButtonRows, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        Columns="{Binding DataContext.ButtonColumns, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        ButtonSize="80"
+                                                        ButtonOpacity="0.9"
+                                                        ButtonForeground="White"
+                                                        ButtonBorderBrush="#A0FFFFFF"
+                                                        IsEditMode="True"
+                                                        ItemActivated="ButtonGrid_ItemActivated"
+                                                        ReorderRequested="ButtonGrid_ReorderRequested"
+                                                        ExternalDropRequested="ButtonGrid_ExternalDropRequested"/>
+                        </Border>
+
+                        <TextBlock Grid.Row="5" Margin="0,10,0,0" MinHeight="22">
+                            <Run Text="選択中: "/>
+                            <Run Text="{Binding SelectedItem.DisplayText, ElementName=ButtonGrid, Mode=OneWay}" FontWeight="Bold"/>
+                            <Run Text="  /  "/>
+                            <Run Text="{Binding SelectedItem.ActionTypeDisplayName, ElementName=ButtonGrid, Mode=OneWay}"/>
+                        </TextBlock>
+
+                        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <Button Content="前へ" Width="60" Margin="0,0,8,0" Click="MovePreviousButton_Click"/>
+                            <Button Content="次へ" Width="60" Margin="0,0,16,0" Click="MoveNextButton_Click"/>
+                            <Button Content="コピー" Width="60" Margin="0,0,8,0" Click="CopyButton_Click"/>
+                            <Button Content="貼り付け" Width="68" Margin="0,0,16,0" Click="PasteButton_Click"/>
+                            <Button Content="複製" Width="60" Margin="0,0,8,0" Click="DuplicateButton_Click"/>
+                            <Button Content="クリア" Width="60" Margin="0,0,8,0" Click="ClearButton_Click"/>
+                            <Button Content="編集" Width="60" Click="EditButton_Click"/>
+                        </StackPanel>
                     </Grid>
                 </ScrollViewer>
             </TabItem><TabItem Header="一般設定">
@@ -197,12 +227,12 @@
                         </Grid.ColumnDefinitions>
                         
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="起動時に自動起動:" Margin="0,10,10,10"/>
-                        <CheckBox Grid.Row="0" Grid.Column="1" Content="Windowsの起動時にMiniDeckを自動的に起動する" 
+                        <CheckBox x:Name="AutoStartCheckBox" Grid.Row="0" Grid.Column="1" Content="Windowsの起動時にMiniDeckを自動的に起動する"
                                   VerticalAlignment="Center" Foreground="White"/>
                         
                         <TextBlock Grid.Row="1" Grid.Column="0" Text="常に最前面:" Margin="0,10,10,10"/>
-                        <CheckBox Grid.Row="1" Grid.Column="1" Content="MiniDeckを常に他のウィンドウより前面に表示する" 
-                                  VerticalAlignment="Center" Foreground="White" IsChecked="True"/>
+                        <CheckBox x:Name="AlwaysOnTopCheckBox" Grid.Row="1" Grid.Column="1" Content="MiniDeckを常に他のウィンドウより前面に表示する"
+                                  VerticalAlignment="Center" Foreground="White"/>
                         
                         <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" 
                                    Text="※ 設定変更は「適用」または「OK」をクリックすると反映されます。"
@@ -311,6 +341,24 @@
                                    Margin="0,10,0,10" TextWrapping="Wrap" Opacity="0.7" FontSize="11"/>
                     </Grid>
                 </ScrollViewer>
+            </TabItem>
+            <TabItem Header="画像管理">
+                <TabItem.HeaderTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" FontSize="12"/>
+                    </DataTemplate>
+                </TabItem.HeaderTemplate>
+                <Grid Margin="18">
+                    <StackPanel VerticalAlignment="Top">
+                        <TextBlock Text="画像とアイコンの管理" FontSize="18" FontWeight="Bold" Margin="0,0,0,12"/>
+                        <TextBlock Text="ボタン画像、背景画像、Windowsから取得したアイコンの使用状況を確認します。見つからない画像の選び直しと、未使用画像の安全な削除ができます。"
+                                   TextWrapping="Wrap" Margin="0,0,0,18"/>
+                        <Button Content="画像管理を開く..." Width="180" Height="34"
+                                HorizontalAlignment="Left" Click="OpenImageManagement_Click"/>
+                        <TextBlock Text="画像の選び直しは設定画面の下書きへ反映されます。保存するには、この設定画面で「適用」または「OK」を押してください。"
+                                   TextWrapping="Wrap" Margin="0,14,0,0" Opacity="0.7"/>
+                    </StackPanel>
+                </Grid>
             </TabItem>
         </TabControl>
         

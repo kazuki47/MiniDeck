@@ -28,11 +28,49 @@ namespace MiniDeck.Models
         
         [XmlElement("ApplicationArguments")]
         public string ApplicationArguments { get; set; } = "";
+
+        [XmlElement("Url")]
+        public string Url { get; set; } = "";
+
+        [XmlElement("StateDisplayType")]
+        public ButtonStateDisplayType StateDisplayType { get; set; } = ButtonStateDisplayType.None;
+
+        [XmlElement("StateActiveDisplayText")]
+        public string StateActiveDisplayText { get; set; } = "";
+
+        [XmlElement("StateActiveImagePath")]
+        public string StateActiveImagePath { get; set; } = "";
+
+        [XmlElement("StateActiveBackgroundColor")]
+        public string StateActiveBackgroundColor { get; set; } = "#CC2E7D32";
+
+        [XmlElement("StateInactiveBackgroundColor")]
+        public string StateInactiveBackgroundColor { get; set; } = "#403F3F46";
         
         // パラメータなしのコンストラクタ（XMLシリアライゼーション用）
         public ButtonSetting()
         {
         }
+
+        public ButtonSetting Clone()
+        {
+            return new ButtonSetting
+            {
+                DisplayText = DisplayText,
+                ImagePath = ImagePath,
+                ActionType = ActionType,
+                ShortcutKeySequence = ShortcutKeySequence,
+                ApplicationPath = ApplicationPath,
+                ApplicationArguments = ApplicationArguments,
+                Url = Url,
+                StateDisplayType = StateDisplayType,
+                StateActiveDisplayText = StateActiveDisplayText,
+                StateActiveImagePath = StateActiveImagePath,
+                StateActiveBackgroundColor = StateActiveBackgroundColor,
+                StateInactiveBackgroundColor = StateInactiveBackgroundColor
+            };
+        }
+
           // ActionButtonからButtonSettingを作成するコンバータ
         public static ButtonSetting FromActionButton(ActionButton button)
         {
@@ -50,7 +88,13 @@ namespace MiniDeck.Models
                     ActionType = button.ActionType,
                     ShortcutKeySequence = button.ShortcutKeySequence,
                     ApplicationPath = button.ApplicationPath,
-                    ApplicationArguments = button.ApplicationArguments
+                    ApplicationArguments = button.ApplicationArguments,
+                    Url = button.Url,
+                    StateDisplayType = button.StateDisplayType,
+                    StateActiveDisplayText = button.StateActiveDisplayText,
+                    StateActiveImagePath = button.StateActiveImagePath,
+                    StateActiveBackgroundColor = button.StateActiveBackgroundColor,
+                    StateInactiveBackgroundColor = button.StateInactiveBackgroundColor
                 };
                 
                 // アクションタイプ別のデバッグ出力
@@ -69,6 +113,11 @@ namespace MiniDeck.Models
                     {
                         setting.ApplicationArguments = "";
                     }
+                }
+                else if (button.ActionType == ActionType.OpenUrl)
+                {
+                    setting.Url = setting.Url ?? "";
+                    Console.WriteLine($"  URL設定保存: URL={setting.Url}");
                 }
                 
                 return setting;
@@ -94,6 +143,15 @@ namespace MiniDeck.Models
                 actionButton.DisplayText = this.DisplayText ?? "未設定ボタン";
                 actionButton.ImagePath = this.ImagePath;
                 actionButton.ActionType = this.ActionType;
+                actionButton.StateDisplayType = StateDisplayType;
+                actionButton.StateActiveDisplayText = StateActiveDisplayText;
+                actionButton.StateActiveImagePath = StateActiveImagePath;
+                actionButton.StateActiveBackgroundColor = string.IsNullOrWhiteSpace(StateActiveBackgroundColor)
+                    ? "#CC2E7D32"
+                    : StateActiveBackgroundColor;
+                actionButton.StateInactiveBackgroundColor = string.IsNullOrWhiteSpace(StateInactiveBackgroundColor)
+                    ? "#403F3F46"
+                    : StateInactiveBackgroundColor;
                 
                 // アクションタイプ別の設定
                 switch (this.ActionType)
@@ -107,6 +165,11 @@ namespace MiniDeck.Models
                         actionButton.ApplicationPath = this.ApplicationPath;
                         actionButton.ApplicationArguments = this.ApplicationArguments;
                         Console.WriteLine($"  アプリケーション設定: パス={this.ApplicationPath}, 引数={this.ApplicationArguments}");
+                        break;
+
+                    case ActionType.OpenUrl:
+                        actionButton.Url = this.Url;
+                        Console.WriteLine($"  URL設定: {this.Url}");
                         break;
                 }
                 
