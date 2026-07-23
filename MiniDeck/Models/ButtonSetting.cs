@@ -1,5 +1,7 @@
 using MiniDeck.Models;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Xml.Serialization;
 
 namespace MiniDeck.Models
@@ -32,6 +34,16 @@ namespace MiniDeck.Models
         [XmlElement("Url")]
         public string Url { get; set; } = "";
 
+        [XmlArray("MacroActions")]
+        [XmlArrayItem("Action")]
+        public List<MacroActionStep> MacroActions { get; set; } = new List<MacroActionStep>();
+
+        [XmlElement("MacroFailureBehavior")]
+        public MacroFailureBehavior MacroFailureBehavior { get; set; } = MacroFailureBehavior.Stop;
+
+        [XmlElement("MacroRequireConfirmation")]
+        public bool MacroRequireConfirmation { get; set; }
+
         [XmlElement("StateDisplayType")]
         public ButtonStateDisplayType StateDisplayType { get; set; } = ButtonStateDisplayType.None;
 
@@ -63,6 +75,11 @@ namespace MiniDeck.Models
                 ApplicationPath = ApplicationPath,
                 ApplicationArguments = ApplicationArguments,
                 Url = Url,
+                MacroActions = MacroActions?.Select(action => action?.Clone())
+                    .Where(action => action != null)
+                    .ToList() ?? new List<MacroActionStep>(),
+                MacroFailureBehavior = MacroFailureBehavior,
+                MacroRequireConfirmation = MacroRequireConfirmation,
                 StateDisplayType = StateDisplayType,
                 StateActiveDisplayText = StateActiveDisplayText,
                 StateActiveImagePath = StateActiveImagePath,
@@ -90,6 +107,11 @@ namespace MiniDeck.Models
                     ApplicationPath = button.ApplicationPath,
                     ApplicationArguments = button.ApplicationArguments,
                     Url = button.Url,
+                    MacroActions = button.MacroActions?.Select(action => action?.Clone())
+                        .Where(action => action != null)
+                        .ToList() ?? new List<MacroActionStep>(),
+                    MacroFailureBehavior = button.MacroFailureBehavior,
+                    MacroRequireConfirmation = button.MacroRequireConfirmation,
                     StateDisplayType = button.StateDisplayType,
                     StateActiveDisplayText = button.StateActiveDisplayText,
                     StateActiveImagePath = button.StateActiveImagePath,
@@ -143,6 +165,11 @@ namespace MiniDeck.Models
                 actionButton.DisplayText = this.DisplayText ?? "未設定ボタン";
                 actionButton.ImagePath = this.ImagePath;
                 actionButton.ActionType = this.ActionType;
+                actionButton.MacroActions = MacroActions?.Select(action => action?.Clone())
+                    .Where(action => action != null)
+                    .ToList() ?? new List<MacroActionStep>();
+                actionButton.MacroFailureBehavior = MacroFailureBehavior;
+                actionButton.MacroRequireConfirmation = MacroRequireConfirmation;
                 actionButton.StateDisplayType = StateDisplayType;
                 actionButton.StateActiveDisplayText = StateActiveDisplayText;
                 actionButton.StateActiveImagePath = StateActiveImagePath;

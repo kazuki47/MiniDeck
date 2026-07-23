@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows.Input; // ICommandのため
 using System.Windows.Media;
@@ -53,6 +55,8 @@ namespace MiniDeck.Models
                         return "アプリ・ファイルを開く";
                     case ActionType.OpenUrl:
                         return "URLを開く";
+                    case ActionType.MultiAction:
+                        return "マルチアクション";
                     default:
                         return "なし";
                 }
@@ -88,6 +92,44 @@ namespace MiniDeck.Models
         {
             get => _url;
             set { _url = value; OnPropertyChanged(); }
+        }
+
+        private List<MacroActionStep> _macroActions = new List<MacroActionStep>();
+        public List<MacroActionStep> MacroActions
+        {
+            get => _macroActions;
+            set
+            {
+                _macroActions = value ?? new List<MacroActionStep>();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(MacroActionCount));
+            }
+        }
+
+        public int MacroActionCount => MacroActions?.Count ?? 0;
+
+        private MacroFailureBehavior _macroFailureBehavior = MacroFailureBehavior.Stop;
+        public MacroFailureBehavior MacroFailureBehavior
+        {
+            get => _macroFailureBehavior;
+            set
+            {
+                if (_macroFailureBehavior == value) return;
+                _macroFailureBehavior = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _macroRequireConfirmation;
+        public bool MacroRequireConfirmation
+        {
+            get => _macroRequireConfirmation;
+            set
+            {
+                if (_macroRequireConfirmation == value) return;
+                _macroRequireConfirmation = value;
+                OnPropertyChanged();
+            }
         }
 
         private ButtonStateDisplayType _stateDisplayType;
@@ -180,9 +222,26 @@ namespace MiniDeck.Models
         public ButtonRuntimeState RuntimeState => _runtimeState;
         public bool IsStateActive => _runtimeState == ButtonRuntimeState.Active;
 
-        public string EffectiveDisplayText => IsStateActive && !string.IsNullOrWhiteSpace(StateActiveDisplayText)
-            ? StateActiveDisplayText
-            : DisplayText;
+        public string EffectiveDisplayText
+        {
+            get
+            {
+                string baseText = IsStateActive && !string.IsNullOrWhiteSpace(StateActiveDisplayText)
+                    ? StateActiveDisplayText
+                    : DisplayText;
+                switch (ExecutionState)
+                {
+                    case MacroExecutionState.Running:
+                        return $"▶ {baseText}";
+                    case MacroExecutionState.Succeeded:
+                        return $"✓ {baseText}";
+                    case MacroExecutionState.Failed:
+                        return $"⚠ {baseText}";
+                    default:
+                        return baseText;
+                }
+            }
+        }
 
         public string EffectiveImagePath => IsStateActive && !string.IsNullOrWhiteSpace(StateActiveImagePath)
             ? StateActiveImagePath
@@ -192,6 +251,16 @@ namespace MiniDeck.Models
         {
             get
             {
+                switch (ExecutionState)
+                {
+                    case MacroExecutionState.Running:
+                        return CreateFrozenBrush("#CC1565C0");
+                    case MacroExecutionState.Succeeded:
+                        return CreateFrozenBrush("#CC2E7D32");
+                    case MacroExecutionState.Failed:
+                        return CreateFrozenBrush("#CCC62828");
+                }
+
                 if (StateDisplayType == ButtonStateDisplayType.None || RuntimeState == ButtonRuntimeState.Unknown)
                 {
                     return Brushes.Transparent;
@@ -200,17 +269,7 @@ namespace MiniDeck.Models
                 string colorValue = RuntimeState == ButtonRuntimeState.Active
                     ? StateActiveBackgroundColor
                     : StateInactiveBackgroundColor;
-                try
-                {
-                    Color color = (Color)ColorConverter.ConvertFromString(colorValue);
-                    var brush = new SolidColorBrush(color);
-                    brush.Freeze();
-                    return brush;
-                }
-                catch
-                {
-                    return Brushes.Transparent;
-                }
+                return CreateFrozenBrush(colorValue);
             }
         }
 
@@ -218,6 +277,11 @@ namespace MiniDeck.Models
         {
             get
             {
+                if (ExecutionState != MacroExecutionState.Idle)
+                {
+                    return ExecutionStatusText;
+                }
+
                 if (StateDisplayType == ButtonStateDisplayType.None)
                 {
                     return null;
@@ -242,6 +306,78 @@ namespace MiniDeck.Models
                 }
 
                 return $"{StateDisplayTypeDisplayName}: {stateLabel}";
+            }
+        }
+
+        private MacroExecutionState _executionState = MacroExecutionState.Idle;
+        private int _executingStepNumber;
+        private int _executingStepCount;
+        private string _executionErrorMessage = "";
+
+        public MacroExecutionState ExecutionState => _executionState;
+        public bool IsExecuting => _executionState == MacroExecutionState.Running;
+
+        public string ExecutionStatusText
+        {
+            get
+            {
+                switch (ExecutionState)
+                {
+                    case MacroExecutionState.Running:
+                        return _executingStepCount > 0
+                            ? $"マルチアクションを実行中（{_executingStepNumber}/{_executingStepCount}）"
+                            : "マルチアクションを実行中";
+                    case MacroExecutionState.Succeeded:
+                        return "マルチアクションが完了しました";
+                    case MacroExecutionState.Failed:
+                        return string.IsNullOrWhiteSpace(_executionErrorMessage)
+                            ? "マルチアクションに失敗しました"
+                            : $"マルチアクションに失敗しました（{_executionErrorMessage}）";
+                    default:
+                        return null;
+                }
+            }
+        }
+
+        public void UpdateExecutionState(
+            MacroExecutionState state,
+            int stepNumber = 0,
+            int stepCount = 0,
+            string errorMessage = null)
+        {
+            string normalizedError = errorMessage ?? "";
+            if (_executionState == state &&
+                _executingStepNumber == stepNumber &&
+                _executingStepCount == stepCount &&
+                _executionErrorMessage == normalizedError)
+            {
+                return;
+            }
+
+            _executionState = state;
+            _executingStepNumber = stepNumber;
+            _executingStepCount = stepCount;
+            _executionErrorMessage = normalizedError;
+            OnPropertyChanged(nameof(ExecutionState));
+            OnPropertyChanged(nameof(IsExecuting));
+            OnPropertyChanged(nameof(ExecutionStatusText));
+            OnPropertyChanged(nameof(EffectiveDisplayText));
+            OnPropertyChanged(nameof(EffectiveBackgroundBrush));
+            OnPropertyChanged(nameof(StateStatusText));
+        }
+
+        private static Brush CreateFrozenBrush(string colorValue)
+        {
+            try
+            {
+                Color color = (Color)ColorConverter.ConvertFromString(colorValue);
+                var brush = new SolidColorBrush(color);
+                brush.Freeze();
+                return brush;
+            }
+            catch
+            {
+                return Brushes.Transparent;
             }
         }
 
@@ -270,7 +406,10 @@ namespace MiniDeck.Models
                    propertyName == nameof(EffectiveDisplayText) ||
                    propertyName == nameof(EffectiveImagePath) ||
                    propertyName == nameof(EffectiveBackgroundBrush) ||
-                   propertyName == nameof(StateStatusText);
+                   propertyName == nameof(StateStatusText) ||
+                   propertyName == nameof(ExecutionState) ||
+                   propertyName == nameof(IsExecuting) ||
+                   propertyName == nameof(ExecutionStatusText);
         }
 
         public ActionButton Clone()
@@ -284,6 +423,11 @@ namespace MiniDeck.Models
                 ApplicationPath = ApplicationPath,
                 ApplicationArguments = ApplicationArguments,
                 Url = Url,
+                MacroActions = MacroActions?.Select(action => action?.Clone())
+                    .Where(action => action != null)
+                    .ToList() ?? new List<MacroActionStep>(),
+                MacroFailureBehavior = MacroFailureBehavior,
+                MacroRequireConfirmation = MacroRequireConfirmation,
                 StateDisplayType = StateDisplayType,
                 StateActiveDisplayText = StateActiveDisplayText,
                 StateActiveImagePath = StateActiveImagePath,

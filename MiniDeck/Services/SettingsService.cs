@@ -319,6 +319,20 @@ namespace MiniDeck.Services
                         page.Buttons[index] = new ButtonSetting();
                         changed = true;
                     }
+
+                    ButtonSetting button = page.Buttons[index];
+                    if (button.MacroActions == null)
+                    {
+                        button.MacroActions = new List<MacroActionStep>();
+                        changed = true;
+                    }
+                    else if (button.MacroActions.Any(action => action == null))
+                    {
+                        button.MacroActions = button.MacroActions
+                            .Where(action => action != null)
+                            .ToList();
+                        changed = true;
+                    }
                 }
 
                 normalizedPages.Add(page);

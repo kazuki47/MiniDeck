@@ -10,7 +10,7 @@ namespace MiniDeck.Models
     [XmlRoot("AppSettings")]
     public class AppSettings
     {
-        public const int CurrentSettingsVersion = 3;
+        public const int CurrentSettingsVersion = 4;
 
         [XmlElement("SettingsVersion")]
         public int SettingsVersion { get; set; }

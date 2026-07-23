@@ -6,6 +6,8 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Input;
 
 namespace MiniDeck.ViewModels
@@ -555,6 +557,12 @@ namespace MiniDeck.ViewModels
                         ApplicationPath = buttonSetting.ApplicationPath,
                         ApplicationArguments = buttonSetting.ApplicationArguments,
                         Url = buttonSetting.Url,
+                        MacroActions = buttonSetting.MacroActions?
+                            .Where(action => action != null)
+                            .Select(action => action.Clone())
+                            .ToList() ?? new List<MacroActionStep>(),
+                        MacroFailureBehavior = buttonSetting.MacroFailureBehavior,
+                        MacroRequireConfirmation = buttonSetting.MacroRequireConfirmation,
                         StateDisplayType = buttonSetting.StateDisplayType,
                         StateActiveDisplayText = buttonSetting.StateActiveDisplayText,
                         StateActiveImagePath = buttonSetting.StateActiveImagePath,
@@ -979,7 +987,44 @@ namespace MiniDeck.ViewModels
                     !string.Equals(button.ShortcutKeySequence ?? "", setting.ShortcutKeySequence ?? "", StringComparison.Ordinal) ||
                     !string.Equals(button.ApplicationPath ?? "", setting.ApplicationPath ?? "", StringComparison.Ordinal) ||
                     !string.Equals(button.ApplicationArguments ?? "", setting.ApplicationArguments ?? "", StringComparison.Ordinal) ||
-                    !string.Equals(button.Url ?? "", setting.Url ?? "", StringComparison.Ordinal))
+                    !string.Equals(button.Url ?? "", setting.Url ?? "", StringComparison.Ordinal) ||
+                    button.MacroFailureBehavior != setting.MacroFailureBehavior ||
+                    button.MacroRequireConfirmation != setting.MacroRequireConfirmation ||
+                    !MacroActionsMatch(button.MacroActions, setting.MacroActions) ||
+                    button.StateDisplayType != setting.StateDisplayType ||
+                    !string.Equals(button.StateActiveDisplayText ?? "", setting.StateActiveDisplayText ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.StateActiveImagePath ?? "", setting.StateActiveImagePath ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.StateActiveBackgroundColor ?? "", setting.StateActiveBackgroundColor ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(button.StateInactiveBackgroundColor ?? "", setting.StateInactiveBackgroundColor ?? "", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool MacroActionsMatch(
+            IList<MacroActionStep> actions,
+            IList<MacroActionStep> settings)
+        {
+            actions = actions ?? new List<MacroActionStep>();
+            settings = settings ?? new List<MacroActionStep>();
+            if (actions.Count != settings.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < actions.Count; index++)
+            {
+                MacroActionStep action = actions[index] ?? new MacroActionStep();
+                MacroActionStep setting = settings[index] ?? new MacroActionStep();
+                if (action.ActionType != setting.ActionType ||
+                    !string.Equals(action.ShortcutKeySequence ?? "", setting.ShortcutKeySequence ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(action.ApplicationPath ?? "", setting.ApplicationPath ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(action.ApplicationArguments ?? "", setting.ApplicationArguments ?? "", StringComparison.Ordinal) ||
+                    !string.Equals(action.Url ?? "", setting.Url ?? "", StringComparison.Ordinal) ||
+                    action.DelayAfterMilliseconds != setting.DelayAfterMilliseconds)
                 {
                     return false;
                 }
@@ -1168,7 +1213,7 @@ namespace MiniDeck.ViewModels
             }
         }
         
-        private void ExecuteButtonAction(ActionButton button)
+        private async void ExecuteButtonAction(ActionButton button)
         {
             if (button == null) return;
             
@@ -1186,9 +1231,106 @@ namespace MiniDeck.ViewModels
                 case ActionType.OpenUrl:
                     _actionService.OpenUrl(button.Url);
                     break;
+                case ActionType.MultiAction:
+                    await ExecuteMacroActionAsync(button);
+                    break;
                 case ActionType.None:
                     // アクションなし - 何もしない（メッセージボックスは表示しない）
                     break;
+            }
+        }
+
+        private async Task ExecuteMacroActionAsync(ActionButton button)
+        {
+            if (button.IsExecuting)
+            {
+                return;
+            }
+
+            List<MacroActionStep> actions = button.MacroActions?
+                .Where(action => action != null)
+                .Select(action => action.Clone())
+                .ToList() ?? new List<MacroActionStep>();
+            if (actions.Count == 0)
+            {
+                button.UpdateExecutionState(
+                    MacroExecutionState.Failed,
+                    errorMessage: "実行するアクションが登録されていません。");
+                StatusText = $"{button.DisplayText}: アクション未設定";
+                return;
+            }
+
+            if (button.MacroRequireConfirmation)
+            {
+                MessageBoxResult confirmation = MessageBox.Show(
+                    $"「{button.DisplayText}」の{actions.Count}個のアクションを実行しますか？",
+                    "マルチアクションの確認",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question,
+                    MessageBoxResult.No);
+                if (confirmation != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            try
+            {
+                button.UpdateExecutionState(MacroExecutionState.Running, 1, actions.Count);
+                StatusText = $"{button.DisplayText}: 実行中";
+                MacroExecutionResult result = await _actionService.ExecuteMacroAsync(
+                    actions,
+                    button.MacroFailureBehavior,
+                    (step, count) =>
+                    {
+                        button.UpdateExecutionState(MacroExecutionState.Running, step, count);
+                        StatusText = $"{button.DisplayText}: {step}/{count} 実行中";
+                    });
+
+                if (result.Succeeded)
+                {
+                    button.UpdateExecutionState(
+                        MacroExecutionState.Succeeded,
+                        actions.Count,
+                        actions.Count);
+                    StatusText = $"{button.DisplayText}: 完了";
+                    await Task.Delay(1500);
+                    if (button.ExecutionState == MacroExecutionState.Succeeded)
+                    {
+                        button.UpdateExecutionState(MacroExecutionState.Idle);
+                    }
+                }
+                else
+                {
+                    string failureMessage = result.FailedCount > 1
+                        ? $"{result.FailedCount}個のアクションに失敗しました。{result.ErrorMessage}"
+                        : result.ErrorMessage;
+                    button.UpdateExecutionState(
+                        MacroExecutionState.Failed,
+                        result.AttemptedCount,
+                        actions.Count,
+                        failureMessage);
+                    StatusText = $"{button.DisplayText}: 失敗";
+                    MessageBox.Show(
+                        failureMessage,
+                        result.StoppedOnFailure
+                            ? "マルチアクションを停止しました"
+                            : "マルチアクションが完了しました（失敗あり）",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                button.UpdateExecutionState(
+                    MacroExecutionState.Failed,
+                    errorMessage: ex.Message);
+                StatusText = $"{button.DisplayText}: 失敗";
+                MessageBox.Show(
+                    $"マルチアクションの実行中にエラーが発生しました。\n{ex.Message}",
+                    "マルチアクションエラー",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }        // ダミーコマンドのハンドラメソッド        
         // INotifyPropertyChangedの実装

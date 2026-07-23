@@ -78,6 +78,10 @@
 			<Generator>MSBuild:Compile</Generator>
 			<SubType>Designer</SubType>
 		</Page>
+		<Page Include="MacroActionSettingsWindow.xaml">
+			<Generator>MSBuild:Compile</Generator>
+			<SubType>Designer</SubType>
+		</Page>
 		<Page Include="PageReorderWindow.xaml">
 			<Generator>MSBuild:Compile</Generator>
 			<SubType>Designer</SubType>
@@ -108,14 +112,18 @@
 		<Compile Include="ImageManagementWindow.xaml.cs">
 			<DependentUpon>ImageManagementWindow.xaml</DependentUpon>
 		</Compile>
+		<Compile Include="MacroActionSettingsWindow.xaml.cs">
+			<DependentUpon>MacroActionSettingsWindow.xaml</DependentUpon>
+		</Compile>
 		<Compile Include="PageReorderWindow.xaml.cs">
 			<DependentUpon>PageReorderWindow.xaml</DependentUpon>
 		</Compile>
 		<Compile Include="Models\ActionButton.cs" />
 		<Compile Include="Models\ActionType.cs" />
 		<Compile Include="Models\ButtonSetting.cs" />
-		<Compile Include="Models\ButtonStateDisplayType.cs" />
-		<Compile Include="Models\AppSettings.cs" />
+	<Compile Include="Models\ButtonStateDisplayType.cs" />
+	<Compile Include="Models\MacroActionStep.cs" />
+	<Compile Include="Models\AppSettings.cs" />
 		<Compile Include="Models\PageSetting.cs" />
 		<Compile Include="Services\ActionService.cs" />
 		<Compile Include="Services\AutoStartService.cs" />

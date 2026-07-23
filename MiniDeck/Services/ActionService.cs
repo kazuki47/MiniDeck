@@ -1,3 +1,4 @@
+using MiniDeck.Models;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -7,13 +8,190 @@ using System.Threading.Tasks;
 using WindowsInput;
 using WindowsInput.Events;
 using System.IO;
+using System.Linq;
 
 namespace MiniDeck.Services
 {
+    public sealed class ActionExecutionResult
+    {
+        public bool Succeeded { get; private set; }
+        public string ErrorMessage { get; private set; }
+
+        public static ActionExecutionResult Success()
+        {
+            return new ActionExecutionResult { Succeeded = true, ErrorMessage = "" };
+        }
+
+        public static ActionExecutionResult Failure(string errorMessage)
+        {
+            return new ActionExecutionResult
+            {
+                Succeeded = false,
+                ErrorMessage = errorMessage ?? "アクションの実行に失敗しました。"
+            };
+        }
+    }
+
+    public sealed class MacroExecutionResult
+    {
+        public bool Succeeded { get; internal set; }
+        public int AttemptedCount { get; internal set; }
+        public int FailedCount { get; internal set; }
+        public bool StoppedOnFailure { get; internal set; }
+        public string ErrorMessage { get; internal set; } = "";
+    }
+
     public class ActionService
     {
         public ActionService()
         {
+        }
+
+        public async Task<MacroExecutionResult> ExecuteMacroAsync(
+            IList<MacroActionStep> actions,
+            MacroFailureBehavior failureBehavior,
+            Action<int, int> progress = null,
+            Func<MacroActionStep, Task<ActionExecutionResult>> actionExecutor = null)
+        {
+            var steps = (actions ?? new List<MacroActionStep>())
+                .Where(action => action != null)
+                .ToList();
+            var result = new MacroExecutionResult();
+            if (steps.Count == 0)
+            {
+                result.ErrorMessage = "実行するアクションが登録されていません。";
+                return result;
+            }
+
+            Func<MacroActionStep, Task<ActionExecutionResult>> executor =
+                actionExecutor ?? ExecuteMacroStepAsync;
+
+            for (int index = 0; index < steps.Count; index++)
+            {
+                MacroActionStep step = steps[index];
+                progress?.Invoke(index + 1, steps.Count);
+
+                ActionExecutionResult stepResult;
+                try
+                {
+                    stepResult = await executor(step) ??
+                        ActionExecutionResult.Failure("アクションから実行結果が返されませんでした。");
+                }
+                catch (Exception ex)
+                {
+                    stepResult = ActionExecutionResult.Failure(ex.Message);
+                }
+
+                result.AttemptedCount++;
+                if (!stepResult.Succeeded)
+                {
+                    result.FailedCount++;
+                    result.ErrorMessage =
+                        $"{index + 1}番目「{step.DisplaySummary}」: {stepResult.ErrorMessage}";
+                    if (failureBehavior == MacroFailureBehavior.Stop)
+                    {
+                        result.StoppedOnFailure = true;
+                        result.Succeeded = false;
+                        return result;
+                    }
+                }
+
+                if (index < steps.Count - 1 && step.DelayAfterMilliseconds > 0)
+                {
+                    int delay = Math.Min(step.DelayAfterMilliseconds, 600000);
+                    await Task.Delay(delay);
+                }
+            }
+
+            result.Succeeded = result.FailedCount == 0;
+            return result;
+        }
+
+        public async Task<ActionExecutionResult> ExecuteMacroStepAsync(MacroActionStep step)
+        {
+            if (step == null)
+            {
+                return ActionExecutionResult.Failure("アクションが見つかりません。");
+            }
+
+            try
+            {
+                switch (step.ActionType)
+                {
+                    case ActionType.KeyPress:
+                        if (string.IsNullOrWhiteSpace(step.ShortcutKeySequence))
+                        {
+                            return ActionExecutionResult.Failure("キーシーケンスが未設定です。");
+                        }
+
+                        var keys = ParseKeySequence(step.ShortcutKeySequence);
+                        if (keys.Count == 0)
+                        {
+                            return ActionExecutionResult.Failure(
+                                $"キーシーケンス「{step.ShortcutKeySequence}」を認識できません。");
+                        }
+
+                        var events = Simulate.Events();
+                        events.ClickChord(keys.ToArray());
+                        await events.Invoke();
+                        return ActionExecutionResult.Success();
+
+                    case ActionType.LaunchApplication:
+                        string trimmedPath = step.ApplicationPath?.Trim();
+                        if (string.IsNullOrWhiteSpace(trimmedPath))
+                        {
+                            return ActionExecutionResult.Failure("対象パスが未設定です。");
+                        }
+
+                        bool isFileSystemPath = Path.IsPathRooted(trimmedPath) ||
+                                                trimmedPath.IndexOf(Path.DirectorySeparatorChar) >= 0 ||
+                                                trimmedPath.IndexOf(Path.AltDirectorySeparatorChar) >= 0;
+                        if (isFileSystemPath &&
+                            !File.Exists(trimmedPath) &&
+                            !Directory.Exists(trimmedPath))
+                        {
+                            return ActionExecutionResult.Failure(
+                                $"ファイルまたはフォルダーが見つかりません: {trimmedPath}");
+                        }
+
+                        var startInfo = new ProcessStartInfo(trimmedPath)
+                        {
+                            UseShellExecute = true
+                        };
+                        if (!string.IsNullOrWhiteSpace(step.ApplicationArguments))
+                        {
+                            startInfo.Arguments = step.ApplicationArguments;
+                        }
+
+                        Process.Start(startInfo);
+                        return ActionExecutionResult.Success();
+
+                    case ActionType.OpenUrl:
+                        if (!TryCreateWebUri(step.Url, out Uri uri, out string urlError))
+                        {
+                            return ActionExecutionResult.Failure(urlError);
+                        }
+
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = uri.AbsoluteUri,
+                            UseShellExecute = true
+                        });
+                        return ActionExecutionResult.Success();
+
+                    default:
+                        return ActionExecutionResult.Failure(
+                            "マルチアクション内で使用できないアクション種別です。");
+                }
+            }
+            catch (Win32Exception ex)
+            {
+                return ActionExecutionResult.Failure(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return ActionExecutionResult.Failure(ex.Message);
+            }
         }
 
         public async void ExecuteKeyPress(string keySequence)

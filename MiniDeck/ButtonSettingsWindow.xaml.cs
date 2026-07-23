@@ -2,6 +2,8 @@ using Microsoft.Win32;
 using MiniDeck.Models;
 using MiniDeck.Services;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -16,6 +18,7 @@ namespace MiniDeck
         public ActionButton Button { get; private set; }
         private bool _isCapturingKey = false;
         private readonly ActionService _actionService = new ActionService();
+        private List<MacroActionStep> _macroActions;
 
         public ButtonSettingsWindow(ActionButton button)
         {
@@ -31,6 +34,13 @@ namespace MiniDeck
             ApplicationPathBox.Text = button.ApplicationPath;
             ArgumentsBox.Text = button.ApplicationArguments;
             UrlBox.Text = button.Url;
+            _macroActions = button.MacroActions?
+                .Where(action => action != null)
+                .Select(action => action.Clone())
+                .ToList() ?? new List<MacroActionStep>();
+            SelectMacroFailureBehavior(button.MacroFailureBehavior);
+            MacroConfirmationCheckBox.IsChecked = button.MacroRequireConfirmation;
+            UpdateMacroActionSummary();
             StateActiveTextBox.Text = button.StateActiveDisplayText;
             StateActiveImagePathBox.Text = button.StateActiveImagePath;
             StateActiveColorBox.Text = string.IsNullOrWhiteSpace(button.StateActiveBackgroundColor)
@@ -58,6 +68,10 @@ namespace MiniDeck
                     ActionTypeCombo.SelectedIndex = 3;
                     UrlPanel.Visibility = Visibility.Visible;
                     break;
+                case ActionType.MultiAction:
+                    ActionTypeCombo.SelectedIndex = 4;
+                    MacroActionPanel.Visibility = Visibility.Visible;
+                    break;
                 default:
                     ActionTypeCombo.SelectedIndex = 0;
                     break;
@@ -81,9 +95,58 @@ namespace MiniDeck
 
             UrlPanel.Visibility = (actionType == ActionType.OpenUrl) ?
                 Visibility.Visible : Visibility.Collapsed;
+
+            MacroActionPanel.Visibility = actionType == ActionType.MultiAction
+                ? Visibility.Visible
+                : Visibility.Collapsed;
                 
             // パネルの表示状態が変わったら、ウィンドウサイズを調整
             AdjustWindowSize();
+        }
+
+        private void EditMacroActions_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new MacroActionSettingsWindow(_macroActions)
+            {
+                Owner = this
+            };
+            if (dialog.ShowDialog() == true)
+            {
+                _macroActions = dialog.Actions.Select(action => action.Clone()).ToList();
+                UpdateMacroActionSummary();
+            }
+        }
+
+        private void UpdateMacroActionSummary()
+        {
+            if (MacroActionSummaryText == null)
+            {
+                return;
+            }
+
+            int count = _macroActions?.Count ?? 0;
+            MacroActionSummaryText.Text = $"{count}個のアクション";
+        }
+
+        private void SelectMacroFailureBehavior(MacroFailureBehavior behavior)
+        {
+            foreach (ComboBoxItem item in MacroFailureBehaviorCombo.Items)
+            {
+                if (item.Tag is MacroFailureBehavior itemBehavior && itemBehavior == behavior)
+                {
+                    MacroFailureBehaviorCombo.SelectedItem = item;
+                    return;
+                }
+            }
+
+            MacroFailureBehaviorCombo.SelectedIndex = 0;
+        }
+
+        private MacroFailureBehavior GetSelectedMacroFailureBehavior()
+        {
+            return (MacroFailureBehaviorCombo.SelectedItem as ComboBoxItem)?.Tag is MacroFailureBehavior behavior
+                ? behavior
+                : MacroFailureBehavior.Stop;
         }
 
         private void StateTypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -284,6 +347,17 @@ namespace MiniDeck
             if (selectedItem == null) return;
 
             var selectedActionType = (ActionType)selectedItem.Tag;
+            if (selectedActionType == ActionType.MultiAction &&
+                (_macroActions == null || _macroActions.Count == 0))
+            {
+                MessageBox.Show(
+                    "マルチアクションには1個以上のアクションを登録してください。",
+                    "アクションが未設定です",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
             ButtonStateDisplayType stateDisplayType = GetSelectedStateDisplayType();
             if (stateDisplayType == ButtonStateDisplayType.ApplicationRunning &&
                 (selectedActionType != ActionType.LaunchApplication || string.IsNullOrWhiteSpace(ApplicationPathBox.Text)))
@@ -345,6 +419,12 @@ namespace MiniDeck
                 Button.ApplicationPath = ApplicationPathBox.Text ?? "";
                 Button.ApplicationArguments = ArgumentsBox.Text ?? "";
                 Button.Url = url;
+                Button.MacroActions = _macroActions?
+                    .Where(action => action != null)
+                    .Select(action => action.Clone())
+                    .ToList() ?? new List<MacroActionStep>();
+                Button.MacroFailureBehavior = GetSelectedMacroFailureBehavior();
+                Button.MacroRequireConfirmation = MacroConfirmationCheckBox.IsChecked == true;
                 Button.StateDisplayType = stateDisplayType;
                 Button.StateActiveDisplayText = StateActiveTextBox.Text ?? "";
                 Button.StateActiveImagePath = StateActiveImagePathBox.Text ?? "";
